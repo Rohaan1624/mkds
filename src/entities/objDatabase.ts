@@ -70,8 +70,7 @@ import { Sun } from "./objDecor/Sun";
 import { Teresa } from "./objDecor/Teresa";
 import { TownMonte } from "./objDecor/TownMonte";
 import { TownTree } from "./objDecor/TownTree";
-import { Wanwan } from "./objDecor/Wanwan";
-import { WanwanNoBase } from "./objDecor/WanwanNoBase";
+import { WanwanChained, WanwanReleased } from "./objDecor/Wanwan";
 import { WaterEffect } from "./objDecor/WaterEffect";
 import { Woodbox } from "./objDecor/Woodbox";
 import { ObjPost } from "./objPost";
@@ -158,7 +157,7 @@ export const ObjDatabase = new Map([
 	[0x0191, Kuribo],
 	[0x0192, Rock],
 	[0x0193, Dossun],
-	[0x0196, Wanwan],
+	[0x0196, WanwanChained],
 	[0x0198, Bubble],
 	[0x0199, Choropu],
 	[0x019b, Pukupuku],
@@ -168,7 +167,7 @@ export const ObjDatabase = new Map([
 	[0x01a1, NsKiller],
 	[0x01a3, MoveTree],
 	[0x01a4, Burner],
-	[0x01a5, WanwanNoBase],
+	[0x01a5, WanwanReleased],
 	[0x01a6, Pakkun],
 	[0x01a7, MontyAirship],
 	[0x01a8, Bound],
