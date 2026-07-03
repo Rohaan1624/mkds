@@ -11,6 +11,7 @@ export type CameraFollowTarget = {
 	pos: vec3;
 	angle?: vec3;
 	colRad?: number;
+	vel?: vec3;
 };
 
 function cameraOffsets(target: CameraFollowTarget): { cam: vec3; lookAt: vec3 } {
@@ -28,7 +29,9 @@ export class cameraFollowObject implements Camera {
 	private _camOffset: vec3;
 	private _lookAtOffset: vec3;
 	private _camAngle: number;
-	private _prevPos: vec3;
+	private _smoothPos: vec3;
+	/** Last target pos integrated this frame (avoids double getView jitter). */
+	private _lastIntegratedPos: vec3;
 
 	constructor(target: CameraFollowTarget) {
 		this.target = target;
@@ -37,14 +40,18 @@ export class cameraFollowObject implements Camera {
 		this._camOffset = offsets.cam;
 		this._lookAtOffset = offsets.lookAt;
 		this._camAngle = target.angle != null ? target.angle[1] * (Math.PI / 180) : 0;
-		this._prevPos = vec3.clone(target.pos);
+		this._smoothPos = vec3.clone(target.pos);
+		this._lastIntegratedPos = [NaN, NaN, NaN];
 	}
 
 	getView(_scene: Scene, width?: number, height?: number): CamView {
 		const pos = this.target.pos;
-		const targetAngle = this._resolveAngle(pos);
-		this._camAngle += this._dirDiff(targetAngle, this._camAngle) * 0.075;
-		this._prevPos = vec3.clone(pos);
+		if (this._shouldIntegrate(pos)) {
+			const targetAngle = this._resolveAngle();
+			this._camAngle += this._dirDiff(targetAngle, this._camAngle) * 0.075;
+			this._tweenVec3(this._smoothPos, pos);
+			vec3.copy(this._lastIntegratedPos, pos);
+		}
 
 		const forward = [Math.sin(this._camAngle), 0, -Math.cos(this._camAngle)] as vec3;
 		const up: vec3 = [0, 1, 0];
@@ -65,12 +72,12 @@ export class cameraFollowObject implements Camera {
 		vec3.scale(lookAtPos, lookAtPos, 1 / 1024);
 
 		const mat = mat4.lookAt(mat4.create(), camPos, lookAtPos, up);
-		mat4.translate(mat, mat, vec3.scale([0, 0, 0], pos, -1 / 1024));
+		mat4.translate(mat, mat, vec3.scale([0, 0, 0], this._smoothPos, -1 / 1024));
 
 		const aspect = width != null && height != null && height > 0 ? width / height : gl.viewportWidth / gl.viewportHeight;
 		const p = mat4.perspective(mat4.create(), (70 / 180) * Math.PI, aspect, 0.01, 10000.0);
 
-		this.targetShadowPos = vec3.clone(pos);
+		this.targetShadowPos = vec3.clone(this._smoothPos);
 
 		this.view = {
 			p,
@@ -85,14 +92,28 @@ export class cameraFollowObject implements Camera {
 		return this.view;
 	}
 
-	private _resolveAngle(pos: vec3): number {
-		const dx = pos[0] - this._prevPos[0];
-		const dz = pos[2] - this._prevPos[2];
-		if (dx * dx + dz * dz > 1) {
-			return Math.atan2(dx, -dz);
-		}
-		if (this.target.angle != null) {
-			return this.target.angle[1] * (Math.PI / 180);
+	private _shouldIntegrate(pos: vec3): boolean {
+		return (
+			pos[0] !== this._lastIntegratedPos[0] ||
+			pos[1] !== this._lastIntegratedPos[1] ||
+			pos[2] !== this._lastIntegratedPos[2]
+		);
+	}
+
+	private _tweenVec3(from: vec3, to: vec3) {
+		from[0] += (to[0] - from[0]) * 0.15;
+		from[1] += (to[1] - from[1]) * 0.15;
+		from[2] += (to[2] - from[2]) * 0.15;
+	}
+
+	private _resolveAngle(): number {
+		const vel = this.target.vel;
+		if (vel != null) {
+			const dx = vel[0];
+			const dz = vel[2];
+			if (dx * dx + dz * dz > 0.01) {
+				return Math.atan2(dx, -dz);
+			}
 		}
 		return this._camAngle;
 	}
@@ -111,7 +132,7 @@ function getActiveCourseScene(): courseScene | null {
 	return courseScene.active;
 }
 
-/** Lock the ingame camera onto a scene object (e.g. an IronBall instance). */
+/** Lock the ingame camera onto a scene object (e.g. an IronBallMobile instance). */
 export function focusCameraOn(obj: CameraFollowTarget): boolean {
 	const scene = getActiveCourseScene();
 	if (scene == null) {
