@@ -16,7 +16,7 @@ import { MKDSCONST } from "../engine/mkdsConst";
 import { courseScene } from "../engine/scenes/courseScene";
 import { kartoffsetdata_kart } from "../formats/kartoffsetdata";
 import { kartphysicalparam_kart } from "../formats/kartphysicalparam";
-import { nkm, nkm_section_CPOI, nkm_section_KTPJ, nkm_section_KTPS, nkm_section_MEPO } from "../formats/nkm";
+import { nkm, nkm_section_CPOI, nkm_section_KTP2, nkm_section_KTPJ, nkm_section_KTPS, nkm_section_MEPO } from "../formats/nkm";
 import { nsbmd_modelData } from "../formats/nsbmd";
 import { NitroEmitter } from "../particles/nitroEmitter";
 import { nitroAnimator, nitroAnimator_matStack } from "../render/nitroAnimator";
@@ -130,7 +130,7 @@ export class Kart {
 	wheelParticles: NitroEmitter[];
 	private _nkm: nkm;
 	private _startLine: nkm_section_KTPS;
-	private _passLine: nkm_section_KTPS;
+	private _passLine: nkm_section_KTPS | nkm_section_KTP2;
 	private _respawns: nkm_section_KTPJ[];
 	private _checkpoints: kart_checkpoint[];
 
@@ -1296,7 +1296,7 @@ export class Kart {
 		return this.checkPointNumber + progress + this.lapNumber * this._checkpoints.length;
 	}
 
-	private _forwardCrossedKTP(ktp: nkm_section_KTPS, oldPos: vec3, pos: vec3) {
+	private _forwardCrossedKTP(ktp: nkm_section_KTPS | nkm_section_KTP2, oldPos: vec3, pos: vec3) {
 		const distOld = vec2.sub([0, 0], [ktp.pos[0], ktp.pos[2]], [oldPos[0], oldPos[2]]);
 		const dist = vec2.sub([0, 0], [ktp.pos[0], ktp.pos[2]], [pos[0], pos[2]]);
 

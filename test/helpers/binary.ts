@@ -23,6 +23,12 @@ export class BinaryWriter {
 		return this.writeBytes(new Uint8Array(buf));
 	}
 
+	writeI16(value: number): this {
+		const buf = new ArrayBuffer(2);
+		new DataView(buf).setInt16(0, value, true);
+		return this.writeBytes(new Uint8Array(buf));
+	}
+
 	writeU32(value: number): this {
 		const buf = new ArrayBuffer(4);
 		new DataView(buf).setUint32(0, value >>> 0, true);

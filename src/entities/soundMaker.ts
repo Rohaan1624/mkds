@@ -25,6 +25,8 @@ export class ObjSoundMaker implements SceneEntityObject {
 	threshold: number;
 	gain: number;
 	constructor(obji: nkm_section_OBJI, _scene: Scene) {
+
+		console.log(obji)
 		this.obji = obji;
 		this.pos = vec3.clone(this.obji.pos);
 		this.soundProps = {
@@ -60,9 +62,9 @@ export class ObjSoundMaker implements SceneEntityObject {
 		}
 	}
 
-	draw() {}
+	draw() { }
 
-	update() {}
+	update() { }
 
 	sndUpdate(view: mat4) {
 		//t.soundProps.pos = vec3.transformMat4([], t.pos, view);
@@ -101,5 +103,5 @@ export class ObjSoundMaker implements SceneEntityObject {
 		return { mdl: [] };
 	}
 
-	provideRes(_r: ProvidedRes) {}
+	provideRes(_r: ProvidedRes) { }
 }
