@@ -1,7 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { Bound } from "../../src/entities/objDecor/Bound";
 import { IRON_BALL_BOUNCE_DURATION, IronBallMobile } from "../../src/entities/objDecor/IronBallMobile";
-import { MKDSCONST } from "../../src/engine/mkdsConst";
 import { nkm } from "../../src/formats/nkm";
 import { loadCourseCarc, romExists } from "../helpers/rom";
 
@@ -25,9 +24,7 @@ function makeScene(nkmData: nkm, paths: ReturnType<typeof compilePaths>) {
 		colEnt: [] as lsc_taget[],
 		getRoute: (id: number) => paths[id],
 	} as unknown as Scene;
-	const bounds = nkmData.sections.OBJI.entries
-		.filter((o) => o.ID === 0x01a8)
-		.map((o) => new Bound(o, scene));
+	const bounds = nkmData.sections.OBJI.entries.filter((o) => o.ID === 0x01a8).map((o) => new Bound(o, scene));
 	scene.colEnt = bounds;
 	return { scene, bounds };
 }
@@ -47,10 +44,7 @@ describe.skipIf(!romExists)("IronBallMobile pinball end branch (retail)", () => 
 		const { scene, bounds } = makeScene(nkmData, paths);
 		const stationBound = bounds.find((b) => Math.hypot(b.pos[0] + 260, b.pos[1] - 1270) < 5)!;
 
-		const ball = new IronBallMobile(
-			nkmData.sections.OBJI.entries.find((o) => o.ID === 0x01b0 && o.routeID === 4)!,
-			scene
-		);
+		const ball = new IronBallMobile(nkmData.sections.OBJI.entries.find((o) => o.ID === 0x01b0 && o.routeID === 4)!, scene);
 		const internal = ball as unknown as {
 			_yOffset: number;
 			_delayLeft: number;
@@ -101,10 +95,7 @@ describe.skipIf(!romExists)("IronBallMobile pinball end branch (retail)", () => 
 		const paths = compilePaths(nkmData);
 		const { scene, bounds } = makeScene(nkmData, paths);
 		const stationBound = bounds.find((b) => Math.hypot(b.pos[0] + 260, b.pos[1] - 1270) < 5)!;
-		const ball = new IronBallMobile(
-			nkmData.sections.OBJI.entries.find((o) => o.ID === 0x01b0 && o.routeID === 4)!,
-			scene
-		);
+		const ball = new IronBallMobile(nkmData.sections.OBJI.entries.find((o) => o.ID === 0x01b0 && o.routeID === 4)!, scene);
 		const internal = ball as unknown as {
 			_delayLeft: number;
 			_segFrom: number;
@@ -133,10 +124,7 @@ describe.skipIf(!romExists)("IronBallMobile pinball end branch (retail)", () => 
 		const paths = compilePaths(nkmData);
 		const { scene, bounds } = makeScene(nkmData, paths);
 		const stationBound = bounds.find((b) => Math.hypot(b.pos[0] + 260, b.pos[1] - 1270) < 5)!;
-		const ball = new IronBallMobile(
-			nkmData.sections.OBJI.entries.find((o) => o.ID === 0x01b0 && o.routeID === 4)!,
-			scene
-		);
+		const ball = new IronBallMobile(nkmData.sections.OBJI.entries.find((o) => o.ID === 0x01b0 && o.routeID === 4)!, scene);
 		const internal = ball as unknown as {
 			_delayLeft: number;
 			_segFrom: number;

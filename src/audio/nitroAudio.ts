@@ -151,6 +151,9 @@ export class nitroAudio {
 	): nitroAudioSound | null {
 		//if arc is not specified, we just play a normal sequence. this allows 3 overloads.
 		//obj should have a property "soundProps" where it sets its falloff, position and velocity relative to the oberver occasionally
+		if (arcN == null && !window.debug.audioMusic) return null;
+		if (arcN != null && !window.debug.audioSfx) return null;
+
 		void nitroAudio._ensureRunning();
 		const sound: nitroAudioSound = {
 			dead: false,

@@ -50,7 +50,10 @@ declare global {
 		debug: {
 			kartnoupdate: boolean;
 			debugParticle: boolean;
-		}
+			audioMusic: boolean;
+			audioSfx: boolean;
+			showSoundMakers: boolean;
+		};
 		keysArray: boolean[];
 		mobile?: boolean;
 		touches: MKJSTouch[];
@@ -233,4 +236,4 @@ declare global {
 	}
 }
 
-export { };
+export {};

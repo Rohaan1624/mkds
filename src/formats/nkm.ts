@@ -646,11 +646,7 @@ export class nkm implements MKJSDataFormator {
 			const pos = readVecFx32(view, off);
 			const radius = view.getInt32(off + 0xc, true) / FX32_SCALE;
 			const recalcIdx = view.getUint8(off + 0x10);
-			const padding = [
-				view.getUint8(off + 0x11),
-				view.getUint8(off + 0x12),
-				view.getUint8(off + 0x13),
-			];
+			const padding = [view.getUint8(off + 0x11), view.getUint8(off + 0x12), view.getUint8(off + 0x13)];
 			const nextOff = off + 0x14;
 
 			return {
@@ -918,15 +914,9 @@ export class nkm implements MKJSDataFormator {
 	}
 
 	private _readSection(view: DataView, off: number): SectionObj {
-		const type =
-			MKSUtils.asciireadChar(view, off + 0x0) +
-			MKSUtils.asciireadChar(view, off + 0x1) +
-			MKSUtils.asciireadChar(view, off + 0x2) +
-			MKSUtils.asciireadChar(view, off + 0x3);
+		const type = MKSUtils.readAsciiTag(view, off);
 		if (type == "STAG") {
-			const stag = this._readSTAG(view, off);
-			console.log(stag)
-			return stag
+			return this._readSTAG(view, off);
 		}
 
 		const handler = this.handlers[type];

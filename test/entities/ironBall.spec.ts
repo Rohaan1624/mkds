@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { MKDSCONST } from "../../src/engine/mkdsConst";
 import { Bound } from "../../src/entities/objDecor/Bound";
 import { Flipper } from "../../src/entities/objDecor/Flipper";
 import {
@@ -13,7 +14,6 @@ import {
 	IronBallStatic,
 	ironBallStaticTargetDiameter,
 } from "../../src/entities/objDecor/IronBallStatic";
-import { MKDSCONST } from "../../src/engine/mkdsConst";
 import { nkm } from "../../src/formats/nkm";
 import { nsbmd } from "../../src/formats/nsbmd";
 import { modelPolyLocalBounds, modelWorldYExtent } from "../../src/utils/modelLocalBounds";
@@ -84,8 +84,7 @@ describe("IronBallMobile Bound bounce", () => {
 		internal._bounceBoostLeft = IRON_BALL_BOUNCE_DURATION - 1;
 		internal._routeSpeed = IRON_BALL_SPEED + IRON_BALL_BOUNCE_BOOST;
 		const before = internal._routeSpeed;
-		const targetBeforeTick =
-			IRON_BALL_SPEED + IRON_BALL_BOUNCE_BOOST * (internal._bounceBoostLeft / IRON_BALL_BOUNCE_DURATION);
+		const targetBeforeTick = IRON_BALL_SPEED + IRON_BALL_BOUNCE_BOOST * (internal._bounceBoostLeft / IRON_BALL_BOUNCE_DURATION);
 
 		const speed = internal._stepRouteSpeed();
 

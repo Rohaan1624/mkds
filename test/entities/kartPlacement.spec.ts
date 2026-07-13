@@ -1,8 +1,8 @@
 import { vec2 } from "gl-matrix";
 import { describe, expect, it } from "vitest";
-import { nkm, nkm_section_CPOI } from "../../src/formats/nkm";
-import { ROM_COURSES, isBattleCourse, loadCourseBundle } from "../helpers/romCourse";
+import { nkm_section_CPOI } from "../../src/formats/nkm";
 import { romExists } from "../helpers/rom";
+import { ROM_COURSES, isBattleCourse, loadCourseBundle } from "../helpers/romCourse";
 
 function getPositionLike(
 	cps: nkm_section_CPOI[],
@@ -48,10 +48,7 @@ describe.skipIf(!romExists)("kart placement", () => {
 
 			let leaderOnFinalStretch = -Infinity;
 			for (const p of epois) {
-				leaderOnFinalStretch = Math.max(
-					leaderOnFinalStretch,
-					getPositionLike(cps, lastIdx, [], lap, p.pos[0], p.pos[2])
-				);
+				leaderOnFinalStretch = Math.max(leaderOnFinalStretch, getPositionLike(cps, lastIdx, [], lap, p.pos[0], p.pos[2]));
 			}
 
 			expect(leaderOnFinalStretch).toBeGreaterThan(rivalStillRacing);

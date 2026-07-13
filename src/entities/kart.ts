@@ -470,7 +470,7 @@ export class Kart {
 
 	update(scene: courseScene) {
 		if (window.debug.kartnoupdate && !this.local) {
-			return
+			return;
 		}
 		if (this.placement != this.lastPlacement) {
 			if (this.placement < this.lastPlacement) {
@@ -1285,8 +1285,7 @@ export class Kart {
 	getPosition() {
 		if (this._checkpoints.length == 0) return 0;
 
-		const targets =
-			this._futureChecks.length > 0 ? this._futureChecks : [0];
+		const targets = this._futureChecks.length > 0 ? this._futureChecks : [0];
 		let progress = 0;
 		for (let i = 0; i < targets.length; i++) {
 			const check = this._checkpoints[targets[i]] as nkm_section_CPOI;

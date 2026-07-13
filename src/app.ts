@@ -4,9 +4,12 @@ import { syncMobileControlsVisibility } from "./ui/mobileControlsOverlay";
 Object.assign(window, {
 	debug: {
 		kartnoupdate: false,
-		debugParticle: false
-	}
-})
+		debugParticle: false,
+		audioMusic: true,
+		audioSfx: true,
+		showSoundMakers: false,
+	},
+});
 
 export function mobilecheck(window: Window & { opera: string }) {
 	let check = false;
@@ -151,12 +154,12 @@ function requestAppFullscreen() {
 	const root = document.documentElement;
 	const request =
 		root.requestFullscreen || (root as HTMLElement & { webkitRequestFullscreen?: () => Promise<void> }).webkitRequestFullscreen;
-	request?.call(root)?.catch?.(() => { });
+	request?.call(root)?.catch?.(() => {});
 }
 
 function exitAppFullscreen() {
 	const exit = document.exitFullscreen || (document as Document & { webkitExitFullscreen?: () => Promise<void> }).webkitExitFullscreen;
-	exit?.call(document)?.catch?.(() => { });
+	exit?.call(document)?.catch?.(() => {});
 }
 
 export function setupFullscreen() {

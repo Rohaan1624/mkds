@@ -50,24 +50,24 @@ export abstract class ObjDecor implements SceneEntityObject {
 			setting1: {
 				raw: this._obji.setting1,
 				hex: this._obji.setting1 & 0xffff,
-				hex16: this._obji.setting1 >> 16
+				hex16: this._obji.setting1 >> 16,
 			},
 			setting2: {
 				raw: this._obji.setting2,
 				hex: this._obji.setting2 & 0xffff,
-				hex16: this._obji.setting2 >> 16
+				hex16: this._obji.setting2 >> 16,
 			},
 			setting3: {
 				raw: this._obji.setting3,
 				hex: this._obji.setting3 & 0xffff,
-				hex16: this._obji.setting3 >> 16
+				hex16: this._obji.setting3 >> 16,
 			},
 			setting4: {
 				raw: this._obji.setting4,
 				hex: this._obji.setting4 & 0xffff,
-				hex16: this._obji.setting4 >> 16
-			}
-		})
+				hex16: this._obji.setting4 >> 16,
+			},
+		});
 	}
 
 	protected _placementPos(): vec3 {

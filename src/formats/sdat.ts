@@ -76,6 +76,24 @@ export type sdat_section =
 	| sdat_section_6
 	| sdat_section_7;
 
+/** One SSAR archive entry in the SYMB block (record 1). */
+export type sdat_symb_ssar = {
+	name: string;
+	sequences: string[];
+};
+
+/** Human-readable names from the optional SYMB block, indexed like INFO (0–7). */
+export type sdat_symb = [
+	string[], // 0: SSEQ
+	sdat_symb_ssar[], // 1: SSAR
+	string[], // 2: SBNK
+	string[], // 3: SWAR
+	string[], // 4: sequence player
+	string[], // 5: group
+	string[], // 6: stream player
+	string[], // 7: STRM
+];
+
 type sdat_fat = {
 	off: number;
 	size: number;
@@ -83,6 +101,7 @@ type sdat_fat = {
 
 type sdat_sections = {
 	"$FAT ": sdat_fat[];
+	$SYMB: sdat_symb | undefined;
 	$INFO: [
 		sdat_section_0[],
 		sdat_section_1[],
@@ -114,16 +133,37 @@ export class sdat implements MKJSDataFormator {
 		this.input = input;
 		this.sections = {
 			"$FAT ": undefined!,
+			$SYMB: undefined,
 			$INFO: undefined!,
 			$FILE: undefined!,
 		};
 
 		this.sectionFunc = {};
 
+		this.sectionFunc["$SYMB"] = (view, off): sdat_symb => {
+			const blockOff = off - 8;
+			const symb: sdat_symb = [[], [], [], [], [], [], [], []];
+			for (let i = 0; i < 8; i++) {
+				const recOff = view.getUint32(off + i * 4, true);
+				if (recOff === 0) continue;
+				if (i === 1) {
+					symb[i] = this._readSymbSsarRec(view, blockOff, recOff);
+				} else {
+					symb[i] = this._readSymbRec(view, blockOff, recOff);
+				}
+			}
+			return symb;
+		};
+
 		this.sectionFunc["$INFO"] = (view, off): sdat_sections["$INFO"] => {
 			const obj: sdat_section[][] = [];
 			for (let i = 0; i < 8; i++) {
-				let relOff = off + view.getUint32(off + i * 4, true) - 8;
+				const recOff = view.getUint32(off + i * 4, true);
+				if (recOff === 0) {
+					obj[i] = [];
+					continue;
+				}
+				let relOff = off + recOff - 8;
 				const count = view.getUint32(relOff, true);
 				obj[i] = [];
 				relOff += 4;
@@ -287,6 +327,9 @@ export class sdat implements MKJSDataFormator {
 				case "$FAT ":
 					this.sections["$FAT "] = section as sdat_sections["$FAT "];
 					break;
+				case "$SYMB":
+					this.sections.$SYMB = section as sdat_symb;
+					break;
 				case "$INFO":
 					this.sections["$INFO"] = section as sdat_sections["$INFO"];
 					break;
@@ -295,6 +338,67 @@ export class sdat implements MKJSDataFormator {
 					break;
 			}
 		} else console.error(`Invalid section in SDAT! No handler for section type ${stamp.substr(1, 4)}`);
+	}
+
+	/** True when the archive header includes a symbol block (nBlock === 4). */
+	get hasSymbols(): boolean {
+		return this.sections.$SYMB != null;
+	}
+
+	/** SSEQ name from SYMB record 0, or undefined if absent / out of range. */
+	getSseqName(index: number): string | undefined {
+		return this.sections.$SYMB?.[0][index] || undefined;
+	}
+
+	/** SSEQ index from SYMB record 0, or -1 if the name is missing. */
+	getSseqIndex(name: string): number {
+		const names = this.sections.$SYMB?.[0];
+		if (names == null) return -1;
+		return names.indexOf(name);
+	}
+
+	/** SSAR sub-sequence name, or undefined if absent / out of range. */
+	getSsarSequenceName(archiveIndex: number, sequenceIndex: number): string | undefined {
+		return this.sections.$SYMB?.[1][archiveIndex]?.sequences[sequenceIndex] || undefined;
+	}
+
+	private _readSymbString(view: DataView, blockOff: number, entryOff: number): string {
+		if (entryOff === 0) return "";
+		let pos = blockOff + entryOff;
+		let str = "";
+		while (pos < view.byteLength) {
+			const c = view.getUint8(pos++);
+			if (c === 0) break;
+			str += String.fromCharCode(c);
+		}
+		return str;
+	}
+
+	private _readSymbRec(view: DataView, blockOff: number, recOff: number): string[] {
+		const names: string[] = [];
+		const absRec = blockOff + recOff;
+		const count = view.getUint32(absRec, true);
+		for (let i = 0; i < count; i++) {
+			const entryOff = view.getUint32(absRec + 4 + i * 4, true);
+			names.push(this._readSymbString(view, blockOff, entryOff));
+		}
+		return names;
+	}
+
+	private _readSymbSsarRec(view: DataView, blockOff: number, recOff: number): sdat_symb_ssar[] {
+		const entries: sdat_symb_ssar[] = [];
+		const absRec = blockOff + recOff;
+		const count = view.getUint32(absRec, true);
+		for (let i = 0; i < count; i++) {
+			const groupOff = absRec + 4 + i * 8;
+			const nameOff = view.getUint32(groupOff, true);
+			const subRecOff = view.getUint32(groupOff + 4, true);
+			entries.push({
+				name: this._readSymbString(view, blockOff, nameOff),
+				sequences: this._readSymbRec(view, blockOff, subRecOff),
+			});
+		}
+		return entries;
 	}
 
 	private _getFile(fid: number): ArrayBuffer {

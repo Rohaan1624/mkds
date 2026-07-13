@@ -30,20 +30,13 @@ enum DramState {
 }
 
 /** Cubic Hermite deceleration: starts at startSpeed, ends at rest on targetAngle. */
-function dramDecelAngle(
-	startAngle: number,
-	targetAngle: number,
-	progress: number,
-	startSpeed: number,
-	durationFrames: number,
-): number {
+function dramDecelAngle(startAngle: number, targetAngle: number, progress: number, startSpeed: number, durationFrames: number): number {
 	const t = Math.max(0, Math.min(1, progress));
 	const t2 = t * t;
 	const t3 = t2 * t;
 	const m0 = startSpeed * durationFrames;
 	return (2 * t3 - 3 * t2 + 1) * startAngle + (t3 - 2 * t2 + t) * m0 + (-2 * t3 + 3 * t2) * targetAngle;
 }
-
 
 /** Normalize an angle to [0, 2π). */
 function dramNormalizeAngle(angle: number): number {
@@ -56,11 +49,7 @@ function dramNormalizeAngle(angle: number): number {
 /**
  * Final stop angle: at least fullRotations complete turns from start, aligned on winningSlot.
  */
-function dramSpinTargetAngle(
-	startAngle: number,
-	winningSlot: number,
-	fullRotations: number,
-): number {
+function dramSpinTargetAngle(startAngle: number, winningSlot: number, fullRotations: number): number {
 	const targetNorm = winningSlot * SLOT_STEP_ANGLE;
 	const minAngle = startAngle + fullRotations * 2 * Math.PI;
 	const minNorm = dramNormalizeAngle(minAngle);
@@ -160,7 +149,7 @@ export class Dram extends ObjDecor {
 						this._decelTargetAngle,
 						progress,
 						this._cruiseSpeed,
-						this._decelDur,
+						this._decelDur
 					);
 				}
 				break;
@@ -179,11 +168,7 @@ export class Dram extends ObjDecor {
 
 		mat4.rotateX(this._drawMat, this._drawMat, this._wheelAngle);
 
-		mat4.scale(
-			this._drawMat,
-			this._drawMat,
-			vec3.scale([0, 0, 0], vec3.mul(vec3.create(), this.scale, this._drawScale), 16),
-		);
+		mat4.scale(this._drawMat, this._drawMat, vec3.scale([0, 0, 0], vec3.mul(vec3.create(), this.scale, this._drawScale), 16));
 
 		this._res.mdl[0].draw(this._drawMat, pMatrix);
 	}

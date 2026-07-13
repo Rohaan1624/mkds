@@ -700,8 +700,22 @@
 	function fmtVal(key, value) {
 		if (value == null || key === "nextOff" || key === "type") return null;
 		if (Array.isArray(value)) {
-			if (value.length === 3 && value.every(function (x) { return typeof x === "number"; })) {
-				return key + ": [" + value.map(function (x) { return x.toFixed(2); }).join(", ") + "]";
+			if (
+				value.length === 3 &&
+				value.every(function (x) {
+					return typeof x === "number";
+				})
+			) {
+				return (
+					key +
+					": [" +
+					value
+						.map(function (x) {
+							return x.toFixed(2);
+						})
+						.join(", ") +
+					"]"
+				);
 			}
 			return key + ": [" + value.join(", ") + "]";
 		}
@@ -990,7 +1004,12 @@
 				var ay = [a.yVector[0] * a.dimensions[1], a.yVector[1] * a.dimensions[1], a.yVector[2] * a.dimensions[1]];
 				var az = [a.zVector[0] * a.dimensions[2], a.zVector[1] * a.dimensions[2], a.zVector[2] * a.dimensions[2]];
 				pushBoxWireAxes(lines, a.position, ax, ay, az, col);
-				pickList.push({ type: "AREA", index: i, pos: a.position, radius: Math.max(a.dimensions[0], a.dimensions[1], a.dimensions[2]) });
+				pickList.push({
+					type: "AREA",
+					index: i,
+					pos: a.position,
+					radius: Math.max(a.dimensions[0], a.dimensions[1], a.dimensions[2]),
+				});
 				if (layers.CAME && sections.CAME && sections.CAME.entries[a.cameraId]) {
 					pushLine(lines, a.position, sections.CAME.entries[a.cameraId].position, [col[0], col[1], col[2], 0.4]);
 				}
@@ -1045,11 +1064,7 @@
 	// -----------------------------------------------------------------------
 
 	function camForward() {
-		return [
-			Math.sin(cam.yaw) * Math.cos(cam.pitch),
-			Math.sin(cam.pitch),
-			Math.cos(cam.yaw) * Math.cos(cam.pitch),
-		];
+		return [Math.sin(cam.yaw) * Math.cos(cam.pitch), Math.sin(cam.pitch), Math.cos(cam.yaw) * Math.cos(cam.pitch)];
 	}
 
 	function camRight() {
@@ -1076,7 +1091,10 @@
 		}
 		var sections = course.nkm.sections;
 		["OBJI", "KTPS", "KTPJ"].forEach(function (t) {
-			if (sections[t]) sections[t].entries.forEach(function (e) { extend(e.pos || e.position); });
+			if (sections[t])
+				sections[t].entries.forEach(function (e) {
+					extend(e.pos || e.position);
+				});
 		});
 		if (!any && course.kcl) {
 			for (var i = 1; i < course.kcl.planes.length; i++) {
@@ -1125,11 +1143,15 @@
 			if (cam.pitch > lim) cam.pitch = lim;
 			if (cam.pitch < -lim) cam.pitch = -lim;
 		});
-		canvas.addEventListener("wheel", function (e) {
-			e.preventDefault();
-			var factor = e.deltaY > 0 ? 0.85 : 1.15;
-			cam.speed = Math.max(10, Math.min(20000, cam.speed * factor));
-		}, { passive: false });
+		canvas.addEventListener(
+			"wheel",
+			function (e) {
+				e.preventDefault();
+				var factor = e.deltaY > 0 ? 0.85 : 1.15;
+				cam.speed = Math.max(10, Math.min(20000, cam.speed * factor));
+			},
+			{ passive: false }
+		);
 		window.addEventListener("keydown", function (e) {
 			keys[e.code] = true;
 		});
@@ -1186,7 +1208,11 @@
 			"course: " +
 			course.name +
 			"\ncam: " +
-			cam.pos.map(function (v) { return v.toFixed(0); }).join(", ") +
+			cam.pos
+				.map(function (v) {
+					return v.toFixed(0);
+				})
+				.join(", ") +
 			"   speed: " +
 			cam.speed.toFixed(0) +
 			"/s";

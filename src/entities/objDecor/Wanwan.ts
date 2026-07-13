@@ -414,11 +414,7 @@ export class WanwanChained extends WanwanBase {
 
 	requireRes() {
 		return {
-			mdl: [
-				{ nsbmd: "wanwan.nsbmd" },
-				{ nsbmd: "wanwan_chain.nsbmd" },
-				{ nsbmd: "wanwan_kui.nsbmd" },
-			],
+			mdl: [{ nsbmd: "wanwan.nsbmd" }, { nsbmd: "wanwan_chain.nsbmd" }, { nsbmd: "wanwan_kui.nsbmd" }],
 		};
 	}
 

@@ -3,8 +3,8 @@ import { MKDSCONST } from "../../engine/mkdsConst";
 import { nkm_section_OBJI } from "../../formats/nkm";
 import { nsbta, nsbta_data_obj } from "../../formats/nsbta";
 import { nitromodel_BoundingCollisionModel } from "../../render/nitroModel";
-import { modelPolyLocalBounds, modelPolyLocalYBounds, modelWorldYExtent } from "../../utils/modelLocalBounds";
 import { nitroRender } from "../../render/nitroRender";
+import { modelPolyLocalBounds, modelPolyLocalYBounds, modelWorldYExtent } from "../../utils/modelLocalBounds";
 import { ObjDecor } from "../objDecor";
 
 /** Retail flipper.nsbta / nsbtp electric discharge keyframes. */
@@ -49,7 +49,7 @@ function flipperSideSign(mirror: boolean): number {
 
 /** Mesh swing in degrees from nsbta translateS at the given anim frame. */
 export function flipperSwingDeg(frame: number, mirror: boolean, texAnimKeys?: nsbta_data_obj | null): number {
-	let translateS = frame / (FLIPPER_ANIM_FRAMES - 1) * 2;
+	let translateS = (frame / (FLIPPER_ANIM_FRAMES - 1)) * 2;
 	if (texAnimKeys != null) {
 		const k = texAnimKeys;
 		translateS = _lerpNsbta(frame, k.frameStep.translateS, k.translateS);
@@ -111,7 +111,6 @@ export class Flipper extends ObjDecor {
 		this._mirrorMesh = (obji.setting1 & 1) !== 0;
 		this._cooldown = _pickFlipperWait();
 	}
-
 
 	requireRes() {
 		return { mdl: [{ nsbmd: "flipper.nsbmd" }], other: ["flipper.nsbta", null, "flipper.nsbtp"] };

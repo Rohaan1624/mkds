@@ -24,7 +24,7 @@ export class ObjMovingItemBox extends ItemBox {
 			if (startPoit > 0) {
 				this._initAtRouteIndex(startPoit);
 			} else {
-				const lagUnits = (obji.setting4 & 0xffff) || 120;
+				const lagUnits = obji.setting4 & 0xffff || 120;
 				this._initAtDistanceAlongRoute(lagUnits);
 			}
 		}

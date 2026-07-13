@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { BinaryWriter } from "../helpers/binary";
 import { nkm } from "../../src/formats/nkm";
+import { BinaryWriter } from "../helpers/binary";
 
 function buildNkmWithSections(sections: { type: string; body: ArrayBuffer }[]): ArrayBuffer {
 	const headerLen = 8 + sections.length * 4;

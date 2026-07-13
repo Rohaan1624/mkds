@@ -4,17 +4,25 @@
 // Provides env sound object, such as crowd for figure 8
 // by RHY3756547
 //
-
 import { nitroAudio, nitroAudioSound } from "../audio/nitroAudio";
 import { SoundBox } from "../audio/soundBox";
 import { nkm_section_OBJI } from "../formats/nkm";
+import { nitroRender } from "../render/nitroRender";
 
-//0008
+const MARKER_COLORS: Record<number, number[]> = {
+	0x0005: [0.25, 0.65, 1, 0.9], // blue
+	0x0008: [1, 0.85, 0.2, 0.9], // yellow
+	0x000a: [0.35, 1, 0.45, 0.9], // green
+	0x000e: [1, 0.35, 0.75, 0.9], // pink
+};
 
 export class ObjSoundMaker implements SceneEntityObject {
 	collidable!: boolean;
+	transparent = true;
 	obji: nkm_section_OBJI;
 	pos: vec3;
+	res: ProvidedRes;
+	frame: number;
 	soundProps: {
 		pos: vec3;
 		refDistance: number;
@@ -25,9 +33,9 @@ export class ObjSoundMaker implements SceneEntityObject {
 	threshold: number;
 	gain: number;
 	constructor(obji: nkm_section_OBJI, _scene: Scene) {
-
-		console.log(obji)
 		this.obji = obji;
+		this.res = undefined!;
+		this.frame = 0;
 		this.pos = vec3.clone(this.obji.pos);
 		this.soundProps = {
 			pos: this.pos,
@@ -62,9 +70,35 @@ export class ObjSoundMaker implements SceneEntityObject {
 		}
 	}
 
-	draw() { }
+	draw(view: mat4, pMatrix: mat4) {
+		if (!window.debug.showSoundMakers || nitroRender.flagShadow || this.res?.mdl[0] == null) return;
 
-	update() { }
+		const color = MARKER_COLORS[this.obji.ID] ?? [1, 1, 1, 0.9];
+		const bob = Math.sin(this.frame / 30) * 16;
+
+		if (this.res.mdl[1] != null) {
+			const ringMat = mat4.translate(mat4.create(), view, this.pos);
+			const ringScale = this.soundProps.refDistance / 32;
+			mat4.scale(ringMat, ringMat, [ringScale, 1, ringScale]);
+			nitroRender.setColMult([color[0], color[1], color[2], 0.15]);
+			nitroRender.setShadowReceive(false);
+			this.res.mdl[1].draw(ringMat, pMatrix);
+			nitroRender.setShadowReceive(true);
+		}
+
+		const markerMat = mat4.translate(mat4.create(), view, this.pos);
+		mat4.translate(markerMat, markerMat, [0, bob + 48, 0]);
+		mat4.scale(markerMat, markerMat, [20, 40, 20]);
+		nitroRender.setColMult(color);
+		nitroRender.setShadowReceive(false);
+		this.res.mdl[0].draw(markerMat, pMatrix);
+		nitroRender.setShadowReceive(true);
+		nitroRender.setColMult([1, 1, 1, 1]);
+	}
+
+	update() {
+		this.frame++;
+	}
 
 	sndUpdate(view: mat4) {
 		//t.soundProps.pos = vec3.transformMat4([], t.pos, view);
@@ -100,8 +134,10 @@ export class ObjSoundMaker implements SceneEntityObject {
 	}
 
 	requireRes(): { mdl: { nsbmd: string }[] } {
-		return { mdl: [] };
+		return { mdl: [{ nsbmd: "box.nsbmd" }, { nsbmd: "obj_shadow.nsbmd" }] };
 	}
 
-	provideRes(_r: ProvidedRes) { }
+	provideRes(r: ProvidedRes) {
+		this.res = r;
+	}
 }

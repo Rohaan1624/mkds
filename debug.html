@@ -1017,6 +1017,47 @@
 
 			var sdatCourseMusic = null;
 
+			function sdatHasSymb(sd) {
+				return sd && sd.hasSymbols && sd.sections && sd.sections.$SYMB;
+			}
+
+			function sdatSymbSseqName(sd, index) {
+				if (!sdatHasSymb(sd)) return null;
+				var name = sd.getSseqName(index);
+				return name || null;
+			}
+
+			function sdatSymbSsarName(sd, arcIndex) {
+				if (!sdatHasSymb(sd)) return null;
+				var arc = sd.sections.$SYMB[1][arcIndex];
+				return arc && arc.name ? arc.name : null;
+			}
+
+			function sdatSymbSsarSeqName(sd, arcIndex, seqIndex) {
+				if (!sdatHasSymb(sd)) return null;
+				var name = sd.getSsarSequenceName(arcIndex, seqIndex);
+				return name || null;
+			}
+
+			function sdatSymbBankName(sd, index) {
+				if (!sdatHasSymb(sd)) return null;
+				var name = sd.sections.$SYMB[2][index];
+				return name || null;
+			}
+
+			function sdatSymbSwarName(sd, index) {
+				if (!sdatHasSymb(sd)) return null;
+				var name = sd.sections.$SYMB[3][index];
+				return name || null;
+			}
+
+			function sdatEntryLabel(prefix, index, symbName, fallback) {
+				var label = prefix + index;
+				if (symbName) label += "  " + symbName;
+				else if (fallback) label += "  " + fallback;
+				return label;
+			}
+
 			function buildCourseMusicMap() {
 				var map = Object.create(null);
 				if (typeof MKDSCONST !== "undefined" && MKDSCONST.COURSES) {
@@ -1264,6 +1305,7 @@
 			function formatSdatSummary(sd, path) {
 				var info = sd.sections["$INFO"];
 				var fat = sd.sections["$FAT "];
+				var symb = sd.sections.$SYMB;
 				var lines = [];
 				lines.push(path);
 				lines.push("SDAT archive");
@@ -1276,25 +1318,52 @@
 					lines.push("STRM: " + (info[7] ? info[7].length : 0));
 				}
 				lines.push("");
-				lines.push("Course music IDs (MKDSCONST):");
-				if (!sdatCourseMusic) sdatCourseMusic = buildCourseMusicMap();
-				var keys = Object.keys(sdatCourseMusic)
-					.map(Number)
-					.sort(function (a, b) {
-						return a - b;
-					});
-				for (var k = 0; k < keys.length; k++) {
-					var id = keys[k];
-					lines.push("  #" + id + "  →  " + sdatCourseMusic[id].join(", "));
+				if (sdatHasSymb(sd)) {
+					lines.push("SYMB block: present");
+					lines.push(
+						"  SSEQ names: " +
+							symb[0].length +
+							"  SSAR: " +
+							symb[1].length +
+							"  SBNK: " +
+							symb[2].length +
+							"  SWAR: " +
+							symb[3].length
+					);
+					if (symb[0].length) {
+						lines.push("");
+						lines.push("SSEQ symbols:");
+						for (var si = 0; si < symb[0].length; si++) {
+							if (symb[0][si]) lines.push("  #" + si + "  →  " + symb[0][si]);
+						}
+					}
+				} else {
+					lines.push("SYMB block: absent (retail MKDS strips symbol names)");
+					lines.push("");
+					lines.push("Course music IDs (MKDSCONST fallback):");
+					if (!sdatCourseMusic) sdatCourseMusic = buildCourseMusicMap();
+					var keys = Object.keys(sdatCourseMusic)
+						.map(Number)
+						.sort(function (a, b) {
+							return a - b;
+						});
+					for (var k = 0; k < keys.length; k++) {
+						var id = keys[k];
+						lines.push("  #" + id + "  →  " + sdatCourseMusic[id].join(", "));
+					}
 				}
 				return lines.join("\n");
 			}
 
-			function formatSseqEntryMeta(entry, index) {
+			function formatSseqEntryMeta(entry, index, sd) {
 				var lines = [];
-				lines.push("SSEQ #" + index);
-				if (!sdatCourseMusic) sdatCourseMusic = buildCourseMusicMap();
-				if (sdatCourseMusic[index]) lines.push("Used by: " + sdatCourseMusic[index].join(", "));
+				var symbName = sd ? sdatSymbSseqName(sd, index) : null;
+				lines.push("SSEQ #" + index + (symbName ? "  (" + symbName + ")" : ""));
+				if (symbName) lines.push("SYMB: " + symbName);
+				if (!sdatHasSymb(sd)) {
+					if (!sdatCourseMusic) sdatCourseMusic = buildCourseMusicMap();
+					if (sdatCourseMusic[index]) lines.push("Used by: " + sdatCourseMusic[index].join(", "));
+				}
 				lines.push("fileID: " + entry.fileID);
 				lines.push("bank: " + entry.bank);
 				lines.push("vol: " + entry.vol + "  cpr: " + entry.cpr + "  ppr: " + entry.ppr + "  ply: " + entry.ply);
@@ -1304,10 +1373,21 @@
 				return lines.join("\n");
 			}
 
-			function formatSsarEntryMeta(arc, arcIndex, seqIndex) {
+			function formatSsarEntryMeta(arc, arcIndex, seqIndex, sd) {
 				var entry = arc.arc.entries[seqIndex];
+				var arcName = sd ? sdatSymbSsarName(sd, arcIndex) : null;
+				var seqName = sd ? sdatSymbSsarSeqName(sd, arcIndex, seqIndex) : null;
 				var lines = [];
-				lines.push("SSAR #" + arcIndex + "  seq #" + seqIndex);
+				lines.push(
+					"SSAR #" +
+						arcIndex +
+						(arcName ? "  (" + arcName + ")" : "") +
+						"  seq #" +
+						seqIndex +
+						(seqName ? "  (" + seqName + ")" : "")
+				);
+				if (arcName) lines.push("SYMB archive: " + arcName);
+				if (seqName) lines.push("SYMB sequence: " + seqName);
 				lines.push("fileID: " + arc.fileID);
 				lines.push("entries: " + arc.arc.entries.length);
 				lines.push("bank: " + entry.bank);
@@ -1317,17 +1397,21 @@
 				return lines.join("\n");
 			}
 
-			function formatSbnkEntryMeta(entry, index) {
+			function formatSbnkEntryMeta(entry, index, sd) {
+				var symbName = sd ? sdatSymbBankName(sd, index) : null;
 				var lines = [];
-				lines.push("SBNK #" + index);
+				lines.push("SBNK #" + index + (symbName ? "  (" + symbName + ")" : ""));
+				if (symbName) lines.push("SYMB: " + symbName);
 				lines.push("fileID: " + entry.fileID);
 				lines.push("wave arcs: " + entry.waveArcs.join(", "));
 				return lines.join("\n");
 			}
 
-			function formatSwarEntryMeta(entry, index) {
+			function formatSwarEntryMeta(entry, index, sd) {
+				var symbName = sd ? sdatSymbSwarName(sd, index) : null;
 				var lines = [];
-				lines.push("SWAR #" + index);
+				lines.push("SWAR #" + index + (symbName ? "  (" + symbName + ")" : ""));
+				if (symbName) lines.push("SYMB: " + symbName);
 				lines.push("fileID: " + entry.fileID);
 				if (entry.arc && entry.arc.samples) lines.push("waves: " + entry.arc.samples.length);
 				return lines.join("\n");
@@ -1345,23 +1429,37 @@
 				if (!sdatCourseMusic) sdatCourseMusic = buildCourseMusicMap();
 				if (section === "sseq") {
 					for (var i = 0; i < info[0].length; i++) {
-						var label = "#" + i;
-						if (sdatCourseMusic[i]) label += "  " + sdatCourseMusic[i][0];
-						opts.push('<option value="' + i + '">' + label + "</option>");
+						var symbName = sdatSymbSseqName(sd, i);
+						var courseHint = !symbName && sdatCourseMusic[i] ? sdatCourseMusic[i][0] : null;
+						opts.push('<option value="' + i + '">' + sdatEntryLabel("#", i, symbName, courseHint) + "</option>");
 					}
 				} else if (section === "ssar") {
 					for (var a = 0; a < info[1].length; a++) {
 						var arc = info[1][a];
+						var arcName = sdatSymbSsarName(sd, a);
 						for (var s = 0; s < arc.arc.entries.length; s++) {
-							opts.push('<option value="' + a + ":" + s + '">arc #' + a + " seq #" + s + "</option>");
+							var seqName = sdatSymbSsarSeqName(sd, a, s);
+							var ssarLabel = "arc #" + a;
+							if (arcName) ssarLabel += "  " + arcName;
+							ssarLabel += "  seq #" + s;
+							if (seqName) ssarLabel += "  " + seqName;
+							opts.push('<option value="' + a + ":" + s + '">' + ssarLabel + "</option>");
 						}
 					}
 				} else if (section === "sbnk") {
-					for (var b = 0; b < info[2].length; b++)
-						opts.push('<option value="' + b + '">#' + b + "  fileID=" + info[2][b].fileID + "</option>");
+					for (var b = 0; b < info[2].length; b++) {
+						var bankName = sdatSymbBankName(sd, b);
+						opts.push(
+							'<option value="' + b + '">' + sdatEntryLabel("#", b, bankName, "fileID=" + info[2][b].fileID) + "</option>"
+						);
+					}
 				} else if (section === "swar") {
-					for (var w = 0; w < info[3].length; w++)
-						opts.push('<option value="' + w + '">#' + w + "  fileID=" + info[3][w].fileID + "</option>");
+					for (var w = 0; w < info[3].length; w++) {
+						var swarName = sdatSymbSwarName(sd, w);
+						opts.push(
+							'<option value="' + w + '">' + sdatEntryLabel("#", w, swarName, "fileID=" + info[3][w].fileID) + "</option>"
+						);
+					}
 				}
 				sel.innerHTML = opts.join("");
 			}
@@ -1381,7 +1479,7 @@
 					var entry = info[0][parseInt(selVal, 10)];
 					var data = entry.seq.data;
 					var pc = entry.pc || 0;
-					document.getElementById("sdatEntryMeta").textContent = formatSseqEntryMeta(entry, parseInt(selVal, 10));
+					document.getElementById("sdatEntryMeta").textContent = formatSseqEntryMeta(entry, parseInt(selVal, 10), sd);
 					disasm.textContent = disassembleSseq(data, pc, 800);
 					hex.textContent = formatHexDump(data, 4096);
 					document.getElementById("sdatPlayBtn").disabled = false;
@@ -1394,7 +1492,7 @@
 					var arc = info[1][arcN];
 					var ssarEntry = arc.arc.entries[seqN];
 					var ssarData = arc.arc.data;
-					document.getElementById("sdatEntryMeta").textContent = formatSsarEntryMeta(arc, arcN, seqN);
+					document.getElementById("sdatEntryMeta").textContent = formatSsarEntryMeta(arc, arcN, seqN, sd);
 					disasm.textContent = disassembleSseq(ssarData, ssarEntry.pc, 800);
 					hex.textContent = formatHexDump(ssarData, 4096);
 					document.getElementById("sdatPlayBtn").disabled = false;
@@ -1403,7 +1501,8 @@
 				if (section === "sbnk" && info && info[2][selVal]) {
 					document.getElementById("sdatEntryMeta").textContent = formatSbnkEntryMeta(
 						info[2][parseInt(selVal, 10)],
-						parseInt(selVal, 10)
+						parseInt(selVal, 10),
+						sd
 					);
 					disasm.textContent = "(no disassembly for instrument banks)";
 					hex.textContent = prettyJson(info[2][parseInt(selVal, 10)].bank);
@@ -1413,7 +1512,8 @@
 				if (section === "swar" && info && info[3][selVal]) {
 					document.getElementById("sdatEntryMeta").textContent = formatSwarEntryMeta(
 						info[3][parseInt(selVal, 10)],
-						parseInt(selVal, 10)
+						parseInt(selVal, 10),
+						sd
 					);
 					disasm.textContent = "(no disassembly for wave archives)";
 					hex.textContent = prettyJson(info[3][parseInt(selVal, 10)].arc);
@@ -1473,7 +1573,8 @@
 					var sd = new sdat(buf);
 					sdatView = { path: path, sdat: sd };
 					sdatStopPlayback();
-					nitroAudio.musicOnlyMode = false;
+					window.debug.audioMusic = true;
+					window.debug.audioSfx = true;
 					nitroAudio.init(sd);
 					showSdatView();
 					document.getElementById("sdatSectionSelect").value = "sseq";

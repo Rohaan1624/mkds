@@ -4,8 +4,8 @@
 // Debug camera that follows any scene object with a `pos` field.
 //
 
-import { courseScene } from "../scenes/courseScene";
 import { nitroRender } from "../../render/nitroRender";
+import { courseScene } from "../scenes/courseScene";
 
 export type CameraFollowTarget = {
 	pos: vec3;
@@ -60,11 +60,7 @@ export class cameraFollowObject implements Camera {
 		const camPos = vec3.add(
 			[0, 0, 0],
 			vec3.scale([0, 0, 0], up, this._camOffset[1]),
-			vec3.add(
-				[0, 0, 0],
-				vec3.scale([0, 0, 0], side, this._camOffset[0]),
-				vec3.scale([0, 0, 0], forward, this._camOffset[2])
-			)
+			vec3.add([0, 0, 0], vec3.scale([0, 0, 0], side, this._camOffset[0]), vec3.scale([0, 0, 0], forward, this._camOffset[2]))
 		);
 		const lookAtPos = vec3.scale([0, 0, 0], up, this._lookAtOffset[1]);
 
@@ -82,22 +78,14 @@ export class cameraFollowObject implements Camera {
 		this.view = {
 			p,
 			mv: mat,
-			pos: vec3.scale(
-				[0, 0, 0],
-				vec3.transformMat4([0, 0, 0], [0, 0, 0], mat4.invert(mat4.create(), mat)),
-				1024
-			),
+			pos: vec3.scale([0, 0, 0], vec3.transformMat4([0, 0, 0], [0, 0, 0], mat4.invert(mat4.create(), mat)), 1024),
 		};
 
 		return this.view;
 	}
 
 	private _shouldIntegrate(pos: vec3): boolean {
-		return (
-			pos[0] !== this._lastIntegratedPos[0] ||
-			pos[1] !== this._lastIntegratedPos[1] ||
-			pos[2] !== this._lastIntegratedPos[2]
-		);
+		return pos[0] !== this._lastIntegratedPos[0] || pos[1] !== this._lastIntegratedPos[1] || pos[2] !== this._lastIntegratedPos[2];
 	}
 
 	private _tweenVec3(from: vec3, to: vec3) {

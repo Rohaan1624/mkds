@@ -13,5 +13,14 @@ Object.assign(globalThis, {
 });
 
 if (typeof globalThis.window === "undefined") {
-	Object.assign(globalThis, { window: { debugParticle: false } });
+	Object.assign(globalThis, {
+		window: {
+			debug: {
+				kartnoupdate: false,
+				debugParticle: false,
+				audioMusic: true,
+				audioSfx: true,
+			},
+		},
+	});
 }

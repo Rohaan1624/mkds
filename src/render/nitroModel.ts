@@ -27,7 +27,7 @@ export type nitromodel_collisionModel = { dat: nitromodel_collisionModel_dat[]; 
 export type nitromodel_matStack = { built: boolean; dat: Float32Array };
 type nitroModel_textMapper = { tex: {}; pal: {} };
 
-export type nitroDrawPass = 'all' | 'opaque' | 'blend';
+export type nitroDrawPass = "all" | "opaque" | "blend";
 
 export class nitroModel {
 	btx: nsbtx | null;
@@ -107,7 +107,7 @@ export class nitroModel {
 		this.billboardID = -1;
 	}
 
-	draw(mv: mat4, project: mat4, matStack?: nitromodel_matStack, pass: nitroDrawPass = 'all') {
+	draw(mv: mat4, project: mat4, matStack?: nitromodel_matStack, pass: nitroDrawPass = "all") {
 		const models = this.bmd.modelData.objectData;
 		for (let j = 0; j < models.length; j++) {
 			this._drawModel(models[j], mv, project, j, matStack, pass);
@@ -472,7 +472,7 @@ export class nitroModel {
 		project: mat4,
 		modelind: number,
 		matStack?: nitromodel_matStack,
-		pass: nitroDrawPass = 'all'
+		pass: nitroDrawPass = "all"
 	) {
 		const polys = model.polys.objectData;
 		if (matStack == null) {
@@ -501,8 +501,8 @@ export class nitroModel {
 			const mat = model.materials.objectData[polys[i].mat];
 			const isBlend = this._materialUsesAlphaBlend(mat);
 			if (isBlend) {
-				if (pass !== 'opaque') blendPolys.push(i);
-			} else if (pass !== 'blend') {
+				if (pass !== "opaque") blendPolys.push(i);
+			} else if (pass !== "blend") {
 				this._drawPoly(polys[i], modelind, i);
 			}
 		}

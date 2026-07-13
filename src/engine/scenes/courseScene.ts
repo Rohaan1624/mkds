@@ -358,7 +358,7 @@ export class courseScene implements Scene {
 			const aPos = a.getPosition();
 			const bPos = b.getPosition();
 			if (aPos === bPos) {
-				return 0
+				return 0;
 			}
 			return bPos > aPos ? 1 : -1;
 		});

@@ -250,7 +250,6 @@ export class IronBallMobile extends ObjDecor {
 	}
 
 	private _advanceSegment(takeBranch?: boolean, branchIdx?: number) {
-		const at = this._route[this._segFrom];
 		const lastIdx = this._route.length - 1;
 
 		if (takeBranch == null) {
@@ -321,9 +320,7 @@ export class IronBallMobile extends ObjDecor {
 	}
 
 	private _getCollidableObjs(): (Bound | Flipper)[] {
-		const bounds = <(Bound | Flipper)[]>((this._scene as courseScene).colEnt.filter(
-			(e) => e instanceof Bound || e instanceof Flipper
-		));
+		const bounds = <(Bound | Flipper)[]>(this._scene as courseScene).colEnt.filter((e) => e instanceof Bound || e instanceof Flipper);
 		if (bounds.length > 0) this._collideBoostEntities = bounds;
 		return this._collideBoostEntities ?? bounds;
 	}
@@ -420,10 +417,7 @@ export class IronBallMobile extends ObjDecor {
 	 * center (`_yOffset`). Used when building `_entityByPoitPos` and as a fallback before
 	 * `provideRes`.
 	 */
-	private _matchBoostEntityAtPOIT(
-		poitBottom: vec3,
-		entities: (Bound | Flipper)[]
-	): Bound | Flipper | null {
+	private _matchBoostEntityAtPOIT(poitBottom: vec3, entities: (Bound | Flipper)[]): Bound | Flipper | null {
 		if (entities.length === 0) return null;
 
 		const ballR = this._collisionRadius();
@@ -446,7 +440,6 @@ export class IronBallMobile extends ObjDecor {
 		if (bound instanceof Bound) {
 			bound.onKartHit();
 		}
-
 	}
 
 	private _setColMat() {
@@ -473,6 +466,3 @@ export class IronBallMobile extends ObjDecor {
 		return obji.setting2 >> 16;
 	}
 }
-
-
-
