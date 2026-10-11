@@ -26,6 +26,11 @@ const itemsTex: Record<string, number> = {
 	koura_group_r: 17, // red
 };
 
+/** Item icons the roulette cycles through while an item box is being decided. */
+const ROULETTE = ["koura_g", "banana", "kinoko", "koura_r", "f_box", "star", "bomb", "koura_group_g", "thunder", "teresa", "gesso", "koura_w"];
+/** Frames each icon stays on screen during the roulette. */
+const ROULETTE_FRAMES = 3;
+
 export class ItemUi implements SceneEntity {
 	transparent: boolean;
 	overlay: boolean;
@@ -41,6 +46,8 @@ export class ItemUi implements SceneEntity {
 	animFrame: number;
 	currentItem: string | null;
 	flattenerItem: TileFlattener;
+	private _rouletteFrame = 0;
+	private _shownTex = -1;
 	constructor(scene: Scene, kart: Kart) {
 		this.scene = scene;
 		this.kart = kart;
@@ -102,7 +109,7 @@ export class ItemUi implements SceneEntity {
 		nitroRender.pauseShadowMode();
 		this.flattenerBackground.draw(this.pos.x, this.pos.y, this.zoom);
 		this.flattenerBorder.draw(this.pos.x, this.pos.y, this.zoom);
-		if (this.currentItem) {
+		if (this._shownTex !== -1 && this._shownTex !== blank) {
 			const inset = uiPx(3, this.zoom);
 			this.flattenerItem.draw(this.pos.x + inset, this.pos.y + inset, this.zoom);
 		}
@@ -111,10 +118,21 @@ export class ItemUi implements SceneEntity {
 	}
 
 	update() {
-		if (this.kart.items.currentItem !== this.currentItem) {
-			this.currentItem = this.kart.items.currentItem;
-			const t = itemsTex[this.currentItem ?? ""] ?? blank;
-			this.flattenerItem.loadTextue(t);
+		const items = this.kart.items;
+		const rolling = !items.empty && items.currentItem == null;
+		let tex: number;
+		if (rolling) {
+			this._rouletteFrame++;
+			const icon = ROULETTE[Math.floor(this._rouletteFrame / ROULETTE_FRAMES) % ROULETTE.length];
+			tex = itemsTex[icon];
+		} else {
+			this._rouletteFrame = 0;
+			tex = itemsTex[items.currentItem ?? ""] ?? blank;
+		}
+		this.currentItem = items.currentItem;
+		if (tex !== this._shownTex) {
+			this._shownTex = tex;
+			this.flattenerItem.loadTextue(tex);
 		}
 	}
 }

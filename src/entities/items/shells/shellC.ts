@@ -73,6 +73,7 @@ export abstract class ShellC implements KartItemEntity {
 	}
 
 	update(scene: Scene) {
+		if (this.item.deadTimer > 0) return; // breaking: Item animates the remains
 		this.updateSteering(scene);
 		this.applyMotion();
 		if (this._ttlFrames > 0) {

@@ -19,6 +19,7 @@ import { BombC } from "./items/droppable/bombC";
 import { FakeBoxC } from "./items/droppable/fakeBoxC";
 import { GreenShellC, RedShellC } from "./items/shells/shellC";
 import { GreenShellGroup, RedShellGroup } from "./items/shells/shellGroup";
+import { ItemController } from "../engine/itemController";
 import { Kart } from "./kart";
 
 //
@@ -81,12 +82,20 @@ export class Item {
 	private _throwVelocity: number;
 	private _throwAngle: number;
 	private _working: vec3;
+	/** Position at the start of the last physics step, for swept kart hit tests. */
+	private _prevPos: vec3;
 	deadTimer: number;
 	private _subtypeInd: number;
 	controller: KartItemEntity;
 	holdPos!: vec3;
 	sprMat: mat4 | null;
 	groupItem: Item | null;
+	/** Network id (see ItemController.createItem). */
+	netId = "";
+	/** Set when this item's death came from the network, so it isn't reported back. */
+	netQuiet = false;
+	/** Set when this item hit a kart simulated on this client (that client reports the hit). */
+	private _hitLocalKart = false;
 	constructor(scene: courseScene, owner: Kart, type: keyof items_IngameRes, id: number) {
 		this._minimumMove = 0.01;
 		this._scene = scene;
@@ -123,10 +132,11 @@ export class Item {
 
 		this.groundTime = 0;
 
-		this._deadTimerLength = 30;
+		this._deadTimerLength = 16;
 		this._throwVelocity = 7; //xz velocity for throw. angle adds a y component
 		this._throwAngle = (Math.PI / 10) * 2;
 		this._working = vec3.create();
+		this._prevPos = vec3.clone(this.pos);
 		this.deadTimer = 0; //animates death. goes to 20, then deletes for real. dead objects can't run update or otherwise
 		this.sprMat = null;
 		this.groupItem = null;
@@ -213,6 +223,8 @@ export class Item {
 			}
 		}
 		this.held = false;
+		const isGroup = (this.controller as unknown as { children?: unknown }).children != null;
+		if (!isGroup && !this._owner.netPuppet) ItemController.net?.onRelease(this, forward);
 		return hasMore;
 	}
 
@@ -229,7 +241,7 @@ export class Item {
 		return this.controller.canBeDropped;
 	}
 
-	private isDestructive() {
+	isDestructive() {
 		return this.controller.isDestructive || false;
 	}
 
@@ -301,12 +313,26 @@ export class Item {
 		if (this.pos[2] < -10000) this.finalize(); //out of bounds failsafe
 
 		if (this.deadTimer > 0) {
-			if (this.deadTimer == 1 && this.controller.onDie) this.controller.onDie(false);
+			if (this.deadTimer == 1) {
+				if (!this.netQuiet && (!this._owner.netPuppet || this._hitLocalKart)) ItemController.net?.onDie(this);
+				if (this.controller.onDie) this.controller.onDie(false);
+				if (this.held) {
+					// A held item that breaks flies off with the kart's momentum rather than hanging in the air.
+					this.held = false;
+					this.vel = vec3.clone(this._owner.vel);
+					this.vel[1] += 1.5;
+				} else {
+					// Thrown items break roughly where they hit something.
+					vec3.scale(this.vel, this.vel, 0.15);
+				}
+			}
+			vec3.add(this.pos, this.pos, this.vel);
+			vec3.scale(this.vel, this.vel, 0.85);
 			this.deadTimer++;
 			this.sprMat = mat4.create();
 			mat4.translate(this.sprMat, this.sprMat, [this.deadTimer / 50, Math.sin((this.deadTimer / 30) * Math.PI) * 0.5, 0]);
 			mat4.rotateZ(this.sprMat, this.sprMat, (this.deadTimer / -15) * Math.PI);
-			if (this.deadTimer >= 30) this.finalize();
+			if (this.deadTimer >= this._deadTimerLength) this.finalize();
 			return;
 		}
 
@@ -319,15 +345,20 @@ export class Item {
 		for (let i = 0; i < scene.karts.length; i++) {
 			const ok = scene.karts[i];
 
-			const dist = vec3.dist(vec3.add(this._working, this.pos, [0, this.colRadius / 2, 0]), ok.pos);
-			if (dist < this.colRadius + ok.params.colRadius) {
+			if (this.held && ok === this._owner) continue;
+			// Hits are decided by whichever side sees them: the client simulating the item's owner (shooter)
+			// or the one simulating the kart (victim). Two remote objects meeting is for their clients to decide.
+			if (ok.netPuppet && this._owner.netPuppet) continue;
+			if (this._hitsKart(ok)) {
 				//colliding with a kart.
 				//do we need to do something?
 				if (ok === this.safeKart) {
 					hitSafe = true;
 					continue;
 				}
+				this._hitLocalKart = true;
 				this.collide(ok);
+				if (this.deadTimer === 0) this._hitLocalKart = false;
 			}
 		}
 
@@ -367,7 +398,33 @@ export class Item {
 		}
 	}
 
+	/**
+	 * Held items use a simple sphere test. Thrown items test the segment they travelled last frame
+	 * against the kart's full height, so fast shells don't skip through karts or miss on slopes.
+	 */
+	private _hitsKart(kart: Kart) {
+		const r = this.colRadius;
+		const R = kart.params.colRadius;
+		const center = vec3.add(this._working, this.pos, [0, r / 2, 0]);
+		if (this.held) return vec3.dist(center, kart.pos) < r + R;
+
+		const sx = this._prevPos[0],
+			sz = this._prevPos[2];
+		const dx = this.pos[0] - sx,
+			dz = this.pos[2] - sz;
+		const len2 = dx * dx + dz * dz;
+		let t = len2 > 0 ? ((kart.pos[0] - sx) * dx + (kart.pos[2] - sz) * dz) / len2 : 1;
+		t = Math.max(0, Math.min(1, t));
+		const hx = sx + dx * t - kart.pos[0];
+		const hz = sz + dz * t - kart.pos[2];
+		if (hx * hx + hz * hz >= (r + R) * (r + R)) return false;
+
+		const cy = this._prevPos[1] + (this.pos[1] - this._prevPos[1]) * t + r / 2;
+		return Math.abs(cy - kart.pos[1]) < R + r;
+	}
+
 	private _updateCollision(scene: courseScene) {
+		vec3.copy(this._prevPos, this.pos);
 		if (!this.held) {
 			vec3.add(this.vel, this.vel, this.gravity);
 			vec3.scale(this.vel, this.vel, this.airResist);
@@ -459,7 +516,7 @@ export class Item {
 			//normally, item collision with a wall cause a perfect reflection of the velocity.
 			const proj = vec3.dot(this.vel, n) * 2;
 			vec3.sub(this.vel, this.vel, vec3.scale(vec3.create(), n, proj));
-			this.safeKart = null;
+			if (!this.held) this.safeKart = null;
 		} else if (colType == MKDS_COLTYPE.OOB || colType == MKDS_COLTYPE.FALL) {
 			if (this.deadTimer == 0) this.deadTimer++;
 		} else if (MKDS_COLTYPE.GROUP_ROAD.indexOf(colType) != -1) {

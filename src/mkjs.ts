@@ -81,6 +81,7 @@ import { ObjGear } from "./entities/rotatingGear";
 import { ObjSoundMaker } from "./entities/soundMaker";
 import { ObjBus, ObjCar, ObjTruck } from "./entities/trafficCar";
 import { ObjWater } from "./entities/water";
+import { Frontend } from "./game/frontend";
 
 import {
 	getRequestAnimationFrameFnct,
@@ -245,4 +246,5 @@ Object.assign(window, {
 	syncMobileControlsLayout,
 	syncMobileControlsVisibility,
 	updateMobileControlsOverlay,
+	Frontend,
 });

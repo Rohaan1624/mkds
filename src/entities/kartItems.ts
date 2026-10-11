@@ -2,6 +2,7 @@
 
 import { nitroAudio, nitroAudioSound } from "../audio/nitroAudio";
 import { SoundBox } from "../audio/soundBox";
+import { ItemController } from "../engine/itemController";
 import { Item } from "./item";
 import { Kart } from "./kart";
 
@@ -28,10 +29,8 @@ export class KartItems {
 	private _carouselSfx: nitroAudioSound | null;
 	private _lastItemState: boolean;
 	private _specialItems: string[];
-	private _itemButtonHoldFrames: number;
 	private _itemJustEquipped: boolean;
 	private _itemReleaseDebounce: number;
-	private static readonly ITEM_PRESS_DEBOUNCE = 12;
 	private static readonly ITEM_RELEASE_DEBOUNCE = 12;
 
 	constructor(kart: Kart, scene: Scene) {
@@ -49,7 +48,6 @@ export class KartItems {
 		this._carouselSfx = null;
 		this._lastItemState = false;
 		this._specialItems = ["star"];
-		this._itemButtonHoldFrames = 0;
 		this._itemJustEquipped = false;
 		this._itemReleaseDebounce = 0;
 
@@ -67,11 +65,6 @@ export class KartItems {
 	update(input: InputData) {
 		const pressed = input.item && !this._lastItemState;
 		const released = this._lastItemState && !input.item;
-		if (pressed) {
-			this._itemButtonHoldFrames = 0;
-		} else if (input.item) {
-			this._itemButtonHoldFrames++;
-		}
 		if (this._itemReleaseDebounce > 0) this._itemReleaseDebounce--;
 		if (!this.empty) {
 			if (this.currentItem == null) {
@@ -120,18 +113,34 @@ export class KartItems {
 				this.heldItem = null;
 				this._itemJustEquipped = false;
 			} else if (released && this.heldItem.canBeHeld()) {
-				if (this._itemReleaseDebounce <= 0) {
-					const shortPress = this._itemButtonHoldFrames < KartItems.ITEM_PRESS_DEBOUNCE;
-					const onlyHeldShortEquip = shortPress && this._itemJustEquipped && this.heldItem.onlyHeld();
-					if (shortPress && !onlyHeldShortEquip) {
-						this._release(input);
-						this._itemReleaseDebounce = KartItems.ITEM_RELEASE_DEBOUNCE;
-					}
+				// Like MKDS: hold the button to drag an item behind you, let go to throw it.
+				// Orbiting groups (triple shells) are deployed by the first press and fired by later ones.
+				const deployPress = this._itemJustEquipped && this.heldItem.onlyHeld();
+				if (!deployPress && this._itemReleaseDebounce <= 0) {
+					this._release(input);
+					this._itemReleaseDebounce = KartItems.ITEM_RELEASE_DEBOUNCE;
 				}
 				this._itemJustEquipped = false;
 			}
 		}
 		this._lastItemState = input.item;
+	}
+
+	/** Lose whatever is being dragged/orbiting (when hit or falling off the course). */
+	dropHeld() {
+		const held = this.heldItem;
+		if (held == null) return;
+		this.heldItem = null;
+		this._itemJustEquipped = false;
+		const group = held.controller as unknown as { children?: (Item | null)[] };
+		if (group.children) {
+			for (const child of group.children) if (child && child.deadTimer === 0) child.deadTimer = 1;
+			if (!held.dead) held.finalize();
+		} else if (held.isDestructive()) {
+			if (held.deadTimer === 0) held.deadTimer = 1;
+		} else {
+			held.release(-1); // bananas, fake boxes etc. fall where you were
+		}
 	}
 
 	getItem(_specific: string | null): boolean {
@@ -159,6 +168,7 @@ export class KartItems {
 
 	private _createItem(): Item {
 		const item = this.scene.items.createItem(this.currentItem!, this.kart);
+		if (!this.kart.netPuppet) ItemController.net?.onSpawn(item);
 		return item;
 	}
 

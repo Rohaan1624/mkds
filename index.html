@@ -1,143 +1,45 @@
 <!doctype html>
 <html lang="en">
 	<head>
+		<meta charset="utf-8" />
+		<title>Mario Kart DS Web</title>
 		<link rel="icon" href="data:;base64,iVBORw0KGgo=" />
 		<meta name="viewport" content="initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+		<link rel="preconnect" href="https://fonts.googleapis.com" />
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+		<link href="https://fonts.googleapis.com/css2?family=Lilita+One&family=Nunito:wght@600;800;900&display=swap" rel="stylesheet" />
 		<script>
 			window.mobile = /android|iphone|ipad|ipod|mobile|iemobile|blackberry|opera mini/i.test(navigator.userAgent);
 		</script>
 		<script src="bundle.js"></script>
-		<!-- Inline code (because that's always a good idea) -->
 		<script>
+			// Engine boot + render loop. Menus and game flow live in src/game/frontend.ts.
 			const requestAnimationFrameFnct = getRequestAnimationFrameFnct(window);
 
-			var files = {};
-			var fileQuota;
-			var filesLoaded = 0;
-			var mobile = mobilecheck(window);
-			window.mobile = mobile;
-			var mainRT;
-			var waitForROM = false;
-
+			var mainScene = null;
+			var gamePaused = false;
 			var canvas3D = null;
-			var gameInitialized = false;
-			var ingameRes = null;
-			var lastLang = null;
-			var currentAppState = "upload";
+			var keysArray = new Array(255); // legacy engine input, still read by controlRaceCPU
+			var touches = [];
+			var mobile = window.mobile;
+			var osc, buf, vert;
 
-			function unlockAudio() {
-				if (typeof osc !== "undefined" && osc && !osc.donezo) {
-					osc.start(0);
-					osc.donezo = true;
-				}
-				if (typeof nitroAudio !== "undefined" && nitroAudio.ctx && nitroAudio.ctx.state === "suspended") {
-					return nitroAudio.ctx.resume();
-				}
-				return Promise.resolve();
-			}
-
-			function applySettings() {
-				unlockAudio();
-				refreshSettings();
-				syncMobileControlsVisibility();
-				if (!gameInitialized) return;
-
-				nitroAudio.killAll();
-
-				if (MKDSCONST.CURRENTLANG !== lastLang) {
-					ingameRes = new IngameRes(gameROM);
-					lastLang = MKDSCONST.CURRENTLANG;
-				}
-
-				mainScene = new singleScene("mkds/" + MKDSCONST.CURRENTCOURSE, 0, ingameRes, false);
-
-				if (currentAppState === "playing") {
-					showAppState("start");
-				}
-			}
-
-			function showAppState(state) {
-				currentAppState = state;
-				document.body.className = "state-" + state;
-				onAppStateChange(state);
-				if (state === "playing") {
-					hideMenu();
-				} else {
-					showMenu();
-					showMenuScreen(state);
-				}
-			}
-
-			window.onload = function (argument) {
+			window.onload = function () {
 				window.simpleMatStack = { dat: mat4.create(), built: true };
 				canvas3D = document.getElementById("canvas3d");
-				window.mobile = mobile;
-				setupHUD({ onChange: applySettings });
-				setupHudBehavior();
-				setupFullscreen();
-				setupMobileControlsOverlay();
-				setupMenu({
-					onUploadClick: handleUploadClick,
-					onInitClick: handleInitClick,
-					onStartClick: handleStartClick,
-				});
-
-				fileStore.getInstance().checkRom(function (hasRom) {
-					showAppState(hasRom ? "ready" : "upload");
-				});
+				document.addEventListener("keydown", (e) => (keysArray[e.keyCode] = true));
+				document.addEventListener("keyup", (e) => (keysArray[e.keyCode] = false));
+				Frontend.init();
 			};
 
-			window.onerror = function (...args) {
-				console.debug(args);
-				const [msg, url, line, col, e] = args;
-				if (e) {
-					var stack = e.stack
-						.replace(/^[^\(]+?[\n$]/gm, "")
-						.replace(/^\s+at\s+/gm, "")
-						.replace(/^Object.<anonymous>\s*\(/gm, "{anonymous}()@")
-						.split("\n");
-					console.error(stack);
-				}
+			window.onerror = function (msg, url, line, col, e) {
+				console.error(e ? e.stack : msg);
 			};
 
-			function handleUploadClick() {
-				fileStore.getInstance().promptForRom(function (rom) {
-					if (rom) {
-						showAppState("ready");
-					}
-				});
-			}
-
-			function handleInitClick() {
-				unlockAudio();
-				showAppState("loading");
-				setTimeout(function () {
-					fileStore.getInstance().loadRom(function (rom) {
-						if (!rom) {
-							showAppState("upload");
-							return;
-						}
-						initNitro(rom, false);
-						showAppState("start");
-					});
-				}, 50);
-			}
-
-			function handleStartClick() {
-				unlockAudio().then(function () {
-					showAppState("playing");
-					mainScene.startRace();
-				});
-			}
-
-			let init = false;
-			function initNitro(rom, autostart) {
-				if (init) {
-					return;
-				}
-				init = true;
+			/** Called by the frontend once the ROM is available. Returns the shared IngameRes. */
+			function initNitro(rom) {
 				refreshSettings();
-				gl = initGL(document.getElementById("canvas3d"));
+				gl = initGL(canvas3D);
 				gameROM = new ndsFS(rom);
 
 				nitroRender.init(gl);
@@ -145,610 +47,788 @@
 				sceneDrawer.getInstance().init(gl);
 
 				nitroAudio.init(new sdat(gameROM.getFile("/data/Sound/sound_data.sdat")));
-
+				// Unlock audio on browsers that need a played buffer inside a user gesture.
 				var ctx = nitroAudio.ctx;
 				buf = ctx.createBuffer(1, 1, 44000);
 				osc = ctx.createBufferSource();
 				osc.buffer = buf;
 				osc.connect(ctx.destination);
-				if (osc.noteOn) osc.start = osc.noteOn;
+				osc.start(0);
+				osc.donezo = true;
 
-				var res = new IngameRes(gameROM);
-				ingameRes = res;
-				lastLang = MKDSCONST.CURRENTLANG;
-				gameInitialized = true;
 				vert = 0;
-
-				var canvas = document.getElementById("canvas3d");
-
-				document.addEventListener("mousemove", mouseMove);
-				document.addEventListener("keydown", keyDown);
-				document.addEventListener("keyup", keyUp);
-
-				document.addEventListener("touchstart", touchStart, { passive: false });
-				document.addEventListener("touchend", touchEnd, { passive: false });
-				document.addEventListener("touchcancel", touchCancel, { passive: false });
-				document.addEventListener("touchmove", touchMove, { passive: false });
-
-				canvas.addEventListener("click", function () {
-					if (!osc.donezo) {
-						osc.start(0);
-						osc.donezo = true;
-					}
-				});
-				mainScene = new singleScene("mkds/" + MKDSCONST.CURRENTCOURSE, 0, res, autostart);
-
+				var res = new IngameRes(gameROM);
 				startRenderLoop();
+				return res;
 			}
-
-			var keysArray = new Array(255);
-			var touches = [];
 
 			function startRenderLoop() {
 				startGameLoop(requestAnimationFrameFnct, {
 					onUpdate: function () {
-						mainScene.update();
-						processTouches();
-						updateMobileControlsOverlay();
+						if (mainScene && !gamePaused) mainScene.update();
 					},
 					onRender: function () {
-						big();
-
+						resizeCanvas();
 						gl.viewport(0, 0, gl.viewportWidth, gl.viewportHeight);
 						gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT | gl.STENCIL_BUFFER_BIT);
-
-						mainScene.render();
+						if (mainScene) mainScene.render();
 					},
 				});
 			}
 
-			function keyDown(e) {
-				//e.preventDefault();
-				//e.stopPropagation();
-				keysArray[e.keyCode] = true;
-			}
-
-			function keyUp(e) {
-				// e.preventDefault();
-				// e.stopPropagation();
-				keysArray[e.keyCode] = false;
-			}
-
-			function processTouches() {
-				for (var i = 0; i < touches.length; i++) {
-					var touch = touches[i];
-					touch.pressed = false;
-					touch.lastx = touch.x;
-					touch.lasty = touch.y;
-					if (touch.released) touches.splice(i--, 1);
-				}
-			}
-
-			function setTouchPos(obj, touch) {
-				var rect = canvas3D.getBoundingClientRect();
-				obj.x = (touch.clientX - rect.left) / rect.width;
-				obj.y = (touch.clientY - rect.top) / rect.height;
-			}
-
-			function getTouchObj(touch) {
-				// console.log('getting obj')
-				for (var i = 0; i < touches.length; i++) {
-					var mkTouch = touches[i];
-					if (mkTouch.id == touch.identifier) {
-						setTouchPos(mkTouch, touch);
-						return mkTouch;
-					}
-				}
-				//couldn't find this touch. give it a new object.
-				var result = { id: touch.identifier };
-				setTouchPos(result, touch);
-				touches.push(result);
-				return result;
-			}
-
-			function isInteractiveUITarget(target) {
-				return target && target.closest && target.closest("#menu-overlay, #hud, #hud-peek, button, select, input, label, a");
-			}
-
-			function touchStart(e) {
-				if (isInteractiveUITarget(e.target)) return;
-				//identifier
-				if (!osc.donezo) {
-					osc.start(0);
-					osc.donezo = true;
-				}
-				e.preventDefault();
-				for (var i = 0; i < e.changedTouches.length; i++) {
-					var obj = getTouchObj(e.changedTouches[i]);
-					obj.pressed = true;
-				}
-			}
-
-			function touchEnd(e) {
-				if (isInteractiveUITarget(e.target)) return;
-				e.preventDefault();
-				for (var i = 0; i < e.changedTouches.length; i++) {
-					var obj = getTouchObj(e.changedTouches[i]);
-					obj.released = true;
-				}
-			}
-
-			function touchMove(e) {
-				if (isInteractiveUITarget(e.target)) return;
-				e.preventDefault();
-				for (var i = 0; i < e.changedTouches.length; i++) {
-					var obj = getTouchObj(e.changedTouches[i]);
-				}
-			}
-
-			function touchCancel(e) {
-				if (isInteractiveUITarget(e.target)) return;
-				e.preventDefault();
-				for (var i = 0; i < e.changedTouches.length; i++) {
-					var obj = getTouchObj(e.changedTouches[i]);
-					obj.released = true;
-				}
-			}
-
-			function mouseMove(e) {
-				var movementX = e.movementX || e.mozMovementX || e.webkitMovementX || 0;
-				var movementY = e.movementY || e.mozMovementY || e.webkitMovementY || 0;
-			}
-
 			function initGL(canvas) {
-				try {
-					var gl = canvas.getContext("webgl", { premultipliedAlpha: false, stencil: true, antialias: !mobile }); // || canvas.getContext("experimental-webgl");
-					gl.clearColor(0.46, 0.47, 0.36, 1);
-					gl.clear(gl.COLOR_BUFFER_BIT);
-					gl.enable(gl.DEPTH_TEST);
-					gl.viewportWidth = canvas.width;
-					gl.viewportHeight = canvas.height;
-					return gl;
-				} catch (err) {
+				var gl = canvas.getContext("webgl", { premultipliedAlpha: false, stencil: true, antialias: true });
+				if (!gl) {
 					alert("WebGL could not be initialized.");
-					return false;
+					return null;
 				}
+				gl.clearColor(0.46, 0.47, 0.36, 1);
+				gl.clear(gl.COLOR_BUFFER_BIT);
+				gl.enable(gl.DEPTH_TEST);
+				gl.viewportWidth = canvas.width;
+				gl.viewportHeight = canvas.height;
+				return gl;
 			}
 
-			function big() {
-				const windowWidth = window.innerWidth || document.documentElement.clientWidth || document.body.clientWidth;
-				const windowHeight = window.innerHeight || document.documentElement.clientHeight || document.body.clientHeight;
-				const fit = fitCanvasToWindow(windowWidth, windowHeight);
-
-				canvas3D.width = fit.width;
-				canvas3D.height = fit.height;
-				canvas3D.style.width = fit.width + "px";
-				canvas3D.style.height = fit.height + "px";
-				canvas3D.style.left = fit.offsetX + "px";
-				canvas3D.style.top = fit.offsetY + "px";
-
-				if (gl) {
-					gl.viewportWidth = fit.width;
-					gl.viewportHeight = fit.height;
+			function resizeCanvas() {
+				const fit = fitCanvasToWindow(window.innerWidth, window.innerHeight);
+				if (canvas3D.width !== fit.width || canvas3D.height !== fit.height) {
+					canvas3D.width = fit.width;
+					canvas3D.height = fit.height;
 				}
-
-				syncMobileControlsLayout(fit);
+				gl.viewportWidth = fit.width;
+				gl.viewportHeight = fit.height;
 			}
 		</script>
 		<style>
+			:root {
+				--red: #e8322b;
+				--yellow: #ffcc1a;
+				--blue: #2f7bf5;
+				--panel: rgba(12, 14, 28, 0.78);
+				--panel-border: rgba(255, 255, 255, 0.14);
+				--text: #fff;
+				--muted: rgba(255, 255, 255, 0.65);
+				--accent: var(--yellow);
+				--display: "Lilita One", "Arial Black", system-ui, sans-serif;
+				--body: "Nunito", system-ui, -apple-system, "Segoe UI", sans-serif;
+			}
 			* {
 				box-sizing: border-box;
 			}
-
 			html,
 			body {
 				margin: 0;
-				background-color: black;
-				position: fixed;
-				top: 0;
-				left: 0;
-				right: 0;
-				bottom: 0;
-				font-family:
-					system-ui,
-					-apple-system,
-					"Segoe UI",
-					sans-serif;
-			}
-
-			#canvas3d {
-				display: block;
-				position: fixed;
-			}
-
-			body:not(.state-playing) #canvas3d {
-				pointer-events: none;
-			}
-
-			body.state-playing #canvas3d {
-				z-index: 1;
-			}
-
-			#menu-overlay {
 				position: fixed;
 				inset: 0;
-				z-index: 100;
+				overflow: hidden;
+				background: #000;
+				color: var(--text);
+				font-family: var(--body);
+			}
+			#canvas3d {
+				position: fixed;
+				inset: 0;
+				width: 100vw;
+				height: 100vh;
+				display: block;
+			}
+
+			/* ---------- menu root ---------- */
+			.ui-root {
+				position: fixed;
+				inset: 0;
+				z-index: 10;
 				display: flex;
 				align-items: center;
 				justify-content: center;
-				padding-bottom: 4rem;
-				background: radial-gradient(ellipse at center, rgba(20, 20, 40, 0.97) 0%, rgba(0, 0, 0, 0.98) 100%);
+				padding: 24px 16px;
+				overflow-y: auto;
 			}
-
-			body.state-start #menu-overlay {
-				background: transparent;
-				pointer-events: none;
-			}
-
-			body.state-start #screen-start {
-				pointer-events: auto;
-			}
-
-			#menu-overlay.hidden {
+			.ui-root[hidden] {
 				display: none;
 			}
-
-			#screen-start {
-				background: rgba(0, 0, 0, 0.65);
-				backdrop-filter: blur(4px);
-				border-radius: 1.25rem;
-				border: 1px solid rgba(255, 255, 255, 0.12);
+			.screen-menu,
+			.screen-results,
+			.screen-pause {
+				background: radial-gradient(ellipse at center, rgba(5, 8, 25, 0.35), rgba(0, 0, 0, 0.7));
+				backdrop-filter: blur(3px);
+			}
+			.ui-root.screen-boot {
+				background:
+					repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.025) 0 22px, transparent 22px 44px),
+					radial-gradient(ellipse at 50% 30%, #2a1650, #0b0618 70%);
 			}
 
-			.menu-screen {
+			.panel {
+				background: var(--panel);
+				border: 1px solid var(--panel-border);
+				border-radius: 22px;
+				padding: 28px;
+				width: min(520px, 100%);
 				display: flex;
 				flex-direction: column;
-				align-items: center;
-				gap: 1.25rem;
-				max-width: 28rem;
-				width: 90%;
-				padding: 2.5rem 2rem;
-				text-align: center;
-				color: #fff;
+				gap: 14px;
+				box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55);
+				animation: pop 0.22s ease-out;
+				backdrop-filter: blur(10px);
 			}
-
-			.menu-screen.hidden {
-				display: none;
+			.panel.wide {
+				width: min(1040px, 100%);
 			}
-
-			.menu-title {
-				margin: 0;
-				font-size: 2rem;
-				font-weight: 800;
-				letter-spacing: -0.02em;
-				background: linear-gradient(135deg, #ff4444, #ffcc00);
-				-webkit-background-clip: text;
-				-webkit-text-fill-color: transparent;
-				background-clip: text;
-			}
-
-			.menu-subtitle {
-				margin: 0;
-				font-size: 1rem;
-				line-height: 1.5;
-				color: rgba(255, 255, 255, 0.75);
-			}
-
-			.menu-hint {
-				margin: 0;
-				font-size: 0.85rem;
-				color: rgba(255, 255, 255, 0.45);
-			}
-
-			.menu-btn {
-				appearance: none;
-				border: none;
-				border-radius: 999px;
-				padding: 0.85rem 2.5rem;
-				font-size: 1.05rem;
-				font-weight: 700;
-				cursor: pointer;
-				touch-action: manipulation;
-				-webkit-tap-highlight-color: transparent;
-				color: #fff;
-				background: linear-gradient(135deg, #e82020, #ff6600);
-				box-shadow: 0 4px 20px rgba(232, 32, 32, 0.45);
-				transition:
-					transform 0.15s,
-					box-shadow 0.15s;
-			}
-
-			.menu-btn:hover {
-				transform: translateY(-2px);
-				box-shadow: 0 6px 28px rgba(232, 32, 32, 0.6);
-			}
-
-			.menu-btn:active {
-				transform: translateY(0);
-			}
-
-			.menu-btn--secondary {
-				background: linear-gradient(135deg, #2266cc, #4499ff);
-				box-shadow: 0 4px 20px rgba(34, 102, 204, 0.45);
-			}
-
-			.menu-btn--secondary:hover {
-				box-shadow: 0 6px 28px rgba(34, 102, 204, 0.6);
-			}
-
-			#hud {
-				position: fixed;
-				top: 0;
-				left: 0;
-				right: 0;
-				z-index: 200;
-				display: flex;
-				flex-wrap: wrap;
-				gap: 0.5rem;
-				justify-content: center;
-				align-items: center;
-				padding: 0.6rem 1rem;
-				background: rgba(0, 0, 0, 0.88);
-				border-bottom: 1px solid rgba(255, 255, 255, 0.12);
-				pointer-events: none;
-				opacity: 0;
-				transition: opacity 0.25s ease;
-			}
-
-			body.hud-visible #hud {
-				opacity: 1;
-			}
-
-			body.hud-visible #hud label,
-			body.hud-visible #hud .hud-btn {
-				pointer-events: auto;
-			}
-
-			#hud-peek {
-				position: fixed;
-				top: 0;
-				left: 0;
-				right: 0;
-				height: 3rem;
-				z-index: 201;
-				pointer-events: none;
-				touch-action: manipulation;
-				-webkit-tap-highlight-color: transparent;
-				/* iOS needs a non-transparent background to register touches */
-				background: rgba(0, 0, 0, 0.001);
-			}
-
-			body.state-playing #hud-peek {
-				pointer-events: auto;
-			}
-
-			body.state-playing.hud-visible #hud-peek {
-				pointer-events: none;
-			}
-
-			@media (hover: none) and (pointer: coarse) {
-				#hud-peek {
-					height: 3.5rem;
+			@keyframes pop {
+				from {
+					transform: translateY(12px) scale(0.98);
+					opacity: 0;
 				}
 			}
+			h2.screen-title {
+				margin: 0 0 6px;
+				font-family: var(--display);
+				font-weight: 400;
+				font-size: clamp(26px, 3.4vw, 40px);
+				letter-spacing: 0.5px;
+				display: flex;
+				align-items: center;
+				gap: 12px;
+				flex-wrap: wrap;
+				text-shadow: 0 3px 0 rgba(0, 0, 0, 0.4);
+			}
+			.step {
+				display: block;
+				width: 100%;
+				font-family: var(--body);
+				font-weight: 900;
+				font-size: 12px;
+				letter-spacing: 3px;
+				text-transform: uppercase;
+				color: var(--accent);
+			}
+			.title-portrait {
+				height: 1.3em;
+				image-rendering: pixelated;
+			}
 
-			#hud label {
+			/* ---------- logo / title ---------- */
+			.title-screen {
 				display: flex;
 				flex-direction: column;
-				gap: 0.2rem;
-				font-size: 0.7rem;
-				color: rgba(255, 255, 255, 0.55);
-				text-transform: uppercase;
-				letter-spacing: 0.04em;
-			}
-
-			#hud select {
-				min-width: 6.5rem;
-				padding: 0.4rem 0.6rem;
-				border-radius: 8px;
-				border: 1px solid rgba(255, 255, 255, 0.2);
-				background: rgba(255, 255, 255, 0.1);
-				color: #fff;
-				font-size: 0.85rem;
-			}
-
-			.hud-btn {
-				appearance: none;
-				border: 1px solid rgba(255, 255, 255, 0.25);
-				border-radius: 8px;
-				padding: 0.45rem 0.85rem;
-				font-size: 0.85rem;
-				font-weight: 600;
-				cursor: pointer;
-				touch-action: manipulation;
-				-webkit-tap-highlight-color: transparent;
-				color: #fff;
-				background: rgba(255, 255, 255, 0.12);
-				align-self: flex-end;
-			}
-
-			.hud-btn:hover {
-				background: rgba(255, 255, 255, 0.2);
-			}
-
-			#mobile-controls {
-				position: fixed;
-				z-index: 50;
-				pointer-events: none;
-				display: none;
-				user-select: none;
-				-webkit-user-select: none;
-			}
-
-			#mobile-controls.visible {
-				display: block;
-			}
-
-			.mob-ctrl {
-				position: absolute;
-				display: flex;
 				align-items: center;
-				justify-content: center;
-				border: 2px solid rgba(255, 255, 255, 0.35);
-				background: rgba(255, 255, 255, 0.12);
-				color: rgba(255, 255, 255, 0.85);
-				box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
-				transition:
-					background 0.1s ease,
-					border-color 0.1s ease,
-					box-shadow 0.1s ease;
+				gap: 22px;
+				text-align: center;
 			}
-
-			.mob-ctrl__label {
-				font-size: 0.7rem;
-				font-weight: 700;
-				text-transform: uppercase;
-				letter-spacing: 0.04em;
-				text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
-				pointer-events: none;
-			}
-
-			.mob-ctrl--steer {
-				border-radius: 1.25rem;
+			.logo {
+				display: flex;
 				flex-direction: column;
-				justify-content: center;
 				align-items: center;
-				padding: 0.35rem;
+				line-height: 0.9;
+				transform: rotate(-4deg);
 			}
-
-			.mob-ctrl__steer-separator {
-				display: block;
-				width: 2px;
-				height: 1.35rem;
-				background: rgba(255, 255, 255, 0.35);
-				border-radius: 1px;
-				flex-shrink: 0;
+			.logo-top {
+				font-family: var(--display);
+				font-size: clamp(48px, 9vw, 110px);
+				color: var(--red);
+				-webkit-text-stroke: 3px #fff;
+				paint-order: stroke fill;
+				text-shadow: 0 8px 0 #7a0c09, 0 14px 30px rgba(0, 0, 0, 0.5);
 			}
-
-			.mob-ctrl__steer-arrows {
-				display: flex;
-				align-items: center;
-				justify-content: space-between;
-				width: 78%;
-				max-width: 100%;
+			.logo-ds {
+				font-family: var(--display);
+				font-size: clamp(56px, 11vw, 130px);
+				color: var(--yellow);
+				-webkit-text-stroke: 3px #fff;
+				paint-order: stroke fill;
+				text-shadow: 0 8px 0 #8a5d00;
 			}
-
-			.mob-ctrl__steer-dir {
-				font-size: 1.35rem;
-				line-height: 1;
-				opacity: 0.45;
-				transition: opacity 0.1s ease;
-			}
-
-			.mob-ctrl__steer-dir.active {
-				opacity: 1;
-				color: #ffcc00;
-			}
-
-			.mob-ctrl--item,
-			.mob-ctrl--drift {
+			.logo-web {
+				margin-top: 10px;
+				font-weight: 900;
+				letter-spacing: 8px;
+				font-size: 14px;
+				color: #fff;
+				background: var(--blue);
+				padding: 6px 14px;
 				border-radius: 999px;
 			}
-
-			.mob-ctrl--accel {
-				border-radius: 999px;
+			.logo.small {
+				flex-direction: row;
+				gap: 10px;
+				align-self: center;
+				margin-bottom: 6px;
 			}
-
-			.mob-ctrl--accel .mob-ctrl__label {
-				font-size: 1.1rem;
+			.logo.small .logo-top,
+			.logo.small .logo-ds {
+				font-size: 44px;
+				text-shadow: 0 4px 0 rgba(0, 0, 0, 0.45);
 			}
-
-			.mob-ctrl.active {
-				background: rgba(255, 204, 0, 0.35);
-				border-color: rgba(255, 204, 0, 0.9);
-				box-shadow: 0 0 18px rgba(255, 204, 0, 0.45);
+			.title-status {
+				margin: 0;
+				color: var(--muted);
+				font-weight: 800;
 			}
-
-			.mob-ctrl--accel.reverse.active {
-				background: rgba(255, 68, 68, 0.35);
-				border-color: rgba(255, 68, 68, 0.9);
-				box-shadow: 0 0 18px rgba(255, 68, 68, 0.45);
+			.fineprint {
+				color: var(--muted);
+				font-size: 13px;
+				max-width: 460px;
+				margin: 0;
 			}
-
-			.mob-ctrl--accel.reverse.active .mob-ctrl__label::after {
-				content: " (R)";
-				font-size: 0.55rem;
+			code,
+			kbd {
+				font-family: ui-monospace, monospace;
+				background: rgba(255, 255, 255, 0.12);
+				border-radius: 6px;
+				padding: 1px 6px;
+				font-size: 0.9em;
 			}
-
-			.loading-spinner {
-				width: 3rem;
-				height: 3rem;
-				border: 4px solid rgba(255, 255, 255, 0.15);
-				border-top-color: #ffcc00;
+			kbd {
+				border-bottom: 2px solid rgba(255, 255, 255, 0.3);
+				margin-right: 2px;
+			}
+			.spinner {
+				width: 56px;
+				height: 56px;
 				border-radius: 50%;
+				border: 6px solid rgba(255, 255, 255, 0.15);
+				border-top-color: var(--yellow);
 				animation: spin 0.8s linear infinite;
 			}
-
 			@keyframes spin {
 				to {
 					transform: rotate(360deg);
 				}
 			}
+
+			/* ---------- buttons ---------- */
+			button {
+				font-family: inherit;
+				color: inherit;
+				cursor: pointer;
+			}
+			button:disabled {
+				cursor: default;
+				opacity: 0.45;
+			}
+			.btn {
+				border: 1px solid var(--panel-border);
+				background: rgba(255, 255, 255, 0.08);
+				border-radius: 12px;
+				padding: 12px 20px;
+				font-weight: 900;
+				font-size: 16px;
+				transition:
+					transform 0.1s,
+					background 0.15s;
+			}
+			.btn-primary {
+				background: linear-gradient(180deg, #ff4a3d, #c81d16);
+				border-color: rgba(255, 255, 255, 0.35);
+				box-shadow: 0 4px 0 #6d0b07;
+			}
+			.btn-big {
+				font-size: 22px;
+				padding: 16px 48px;
+				border-radius: 16px;
+			}
+			[data-nav]:focus-visible,
+			[data-nav]:focus {
+				outline: 3px solid var(--yellow);
+				outline-offset: 3px;
+			}
+			[data-nav]:not(:disabled):hover,
+			[data-nav]:focus {
+				transform: translateY(-2px);
+			}
+			.menu-row {
+				display: flex;
+				gap: 10px;
+				justify-content: center;
+				flex-wrap: wrap;
+				margin-top: 8px;
+			}
+			.toggle.on {
+				background: var(--yellow);
+				color: #222;
+			}
+
+			/* ---------- main menu ---------- */
+			.main-menu {
+				width: min(560px, 100%);
+			}
+			.menu-tile {
+				display: grid;
+				grid-template-columns: 56px 1fr;
+				grid-template-rows: auto auto;
+				align-items: center;
+				text-align: left;
+				border: none;
+				border-radius: 16px;
+				padding: 14px 18px;
+				column-gap: 14px;
+				box-shadow: inset 0 -4px 0 rgba(0, 0, 0, 0.25);
+				transition: transform 0.1s;
+			}
+			.tile-icon {
+				grid-row: span 2;
+				font-size: 36px;
+				text-align: center;
+			}
+			.tile-name {
+				font-family: var(--display);
+				font-size: 26px;
+				letter-spacing: 0.5px;
+			}
+			.tile-desc {
+				font-weight: 800;
+				opacity: 0.85;
+				font-size: 14px;
+			}
+			.tile-gp {
+				background: linear-gradient(110deg, #e8322b, #ff7a1a);
+			}
+			.tile-vs {
+				background: linear-gradient(110deg, #2f7bf5, #22b8e8);
+			}
+			.tile-tt {
+				background: linear-gradient(110deg, #2cab4f, #8bd13a);
+			}
+			.tile-mp {
+				background: linear-gradient(110deg, #6b5bd6, #a35bd6);
+			}
+
+			/* ---------- character select ---------- */
+			.char-grid {
+				display: grid;
+				grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+				gap: 12px;
+			}
+			.char-card {
+				position: relative;
+				display: flex;
+				flex-direction: column;
+				align-items: center;
+				gap: 4px;
+				padding: 14px 8px 12px;
+				border-radius: 16px;
+				border: 2px solid transparent;
+				background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 45%, #111), #15172a 80%);
+				transition: transform 0.1s;
+			}
+			.char-card img {
+				width: 72px;
+				height: 72px;
+				object-fit: contain;
+				image-rendering: pixelated;
+				filter: drop-shadow(0 4px 4px rgba(0, 0, 0, 0.5));
+			}
+			.char-card.selected {
+				border-color: var(--accent);
+			}
+			.char-name {
+				font-family: var(--display);
+				font-size: 18px;
+			}
+			.char-weight {
+				font-size: 11px;
+				font-weight: 900;
+				letter-spacing: 2px;
+				text-transform: uppercase;
+				color: var(--muted);
+			}
+
+			/* ---------- kart select ---------- */
+			.kart-grid {
+				display: grid;
+				grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+				gap: 14px;
+			}
+			.kart-card {
+				display: flex;
+				flex-direction: column;
+				gap: 8px;
+				text-align: left;
+				padding: 18px;
+				border-radius: 16px;
+				border: 2px solid var(--panel-border);
+				background: rgba(255, 255, 255, 0.05);
+			}
+			.kart-card.selected {
+				border-color: var(--accent);
+			}
+			.kart-name {
+				font-family: var(--display);
+				font-size: 24px;
+				margin-bottom: 4px;
+			}
+			.stat {
+				display: grid;
+				grid-template-columns: 96px 1fr;
+				align-items: center;
+				gap: 8px;
+				font-size: 13px;
+				font-weight: 800;
+				color: var(--muted);
+			}
+			.bar {
+				height: 10px;
+				border-radius: 999px;
+				background: rgba(255, 255, 255, 0.1);
+				overflow: hidden;
+			}
+			.bar > div {
+				height: 100%;
+				border-radius: inherit;
+				background: linear-gradient(90deg, var(--yellow), var(--red));
+			}
+
+			/* ---------- cups / courses ---------- */
+			.cup-section-label {
+				font-weight: 900;
+				letter-spacing: 3px;
+				font-size: 12px;
+				text-transform: uppercase;
+				color: var(--muted);
+			}
+			.cup-grid {
+				display: grid;
+				grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+				gap: 12px;
+			}
+			.cup-card {
+				display: flex;
+				flex-direction: column;
+				gap: 6px;
+				text-align: left;
+				border: none;
+				border-radius: 16px;
+				padding: 16px;
+				background: linear-gradient(160deg, color-mix(in srgb, var(--accent) 70%, #000), color-mix(in srgb, var(--accent) 25%, #0d0f1f));
+				box-shadow: inset 0 -4px 0 rgba(0, 0, 0, 0.25);
+			}
+			.cup-card.retro {
+				background:
+					repeating-linear-gradient(-45deg, rgba(255, 255, 255, 0.05) 0 10px, transparent 10px 20px),
+					linear-gradient(160deg, color-mix(in srgb, var(--accent) 60%, #000), color-mix(in srgb, var(--accent) 20%, #0d0f1f));
+			}
+			.cup-icon {
+				font-size: 34px;
+			}
+			.cup-name {
+				font-family: var(--display);
+				font-size: 22px;
+			}
+			.cup-courses {
+				font-size: 13px;
+				font-weight: 800;
+				opacity: 0.85;
+				line-height: 1.45;
+			}
+			.course-list {
+				display: flex;
+				flex-direction: column;
+				gap: 10px;
+			}
+			.course-card {
+				display: flex;
+				align-items: center;
+				gap: 14px;
+				padding: 14px 18px;
+				border-radius: 14px;
+				border: 1px solid var(--panel-border);
+				background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 40%, transparent), rgba(255, 255, 255, 0.04));
+				text-align: left;
+			}
+			.course-num {
+				font-family: var(--display);
+				font-size: 26px;
+				width: 32px;
+				color: var(--accent);
+			}
+			.course-name {
+				font-family: var(--display);
+				font-size: 22px;
+			}
+			.option-row {
+				display: flex;
+				align-items: center;
+				gap: 10px;
+				font-weight: 900;
+			}
+			.option-row > span {
+				flex: 1;
+			}
+
+			/* ---------- controls table ---------- */
+			table.controls {
+				border-collapse: collapse;
+				font-size: 14px;
+				width: 100%;
+			}
+			table.controls th {
+				text-align: left;
+				color: var(--muted);
+				font-size: 12px;
+				letter-spacing: 2px;
+				text-transform: uppercase;
+				padding: 6px 4px;
+			}
+			table.controls td {
+				padding: 7px 4px;
+				border-top: 1px solid rgba(255, 255, 255, 0.08);
+				font-weight: 800;
+			}
+
+			/* ---------- race intro ---------- */
+			.screen-intro {
+				background: linear-gradient(180deg, rgba(0, 0, 0, 0.75), rgba(0, 0, 0, 0.35));
+			}
+			.race-intro {
+				text-align: center;
+				animation: slidein 0.4s ease-out;
+			}
+			.kicker {
+				font-weight: 900;
+				letter-spacing: 4px;
+				text-transform: uppercase;
+				color: var(--yellow);
+			}
+			.intro-title {
+				font-family: var(--display);
+				font-size: clamp(40px, 7vw, 84px);
+				text-shadow: 0 6px 0 rgba(0, 0, 0, 0.45);
+			}
+			@keyframes slidein {
+				from {
+					transform: translateX(-60px);
+					opacity: 0;
+				}
+			}
+
+			/* ---------- race HUD (top-right) ---------- */
+			#race-hud {
+				position: fixed;
+				top: 16px;
+				right: 16px;
+				z-index: 5;
+				pointer-events: none;
+			}
+			#race-hud[hidden] {
+				display: none;
+			}
+			.hud-card {
+				min-width: 210px;
+				width: 232px;
+				padding: 12px 16px;
+				border-radius: 16px;
+				background: rgba(8, 10, 24, 0.62);
+				border: 1px solid rgba(255, 255, 255, 0.16);
+				backdrop-filter: blur(6px);
+				box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+			}
+			.hud-label {
+				font-size: 11px;
+				font-weight: 900;
+				letter-spacing: 2px;
+				text-transform: uppercase;
+				color: var(--yellow);
+			}
+			.hud-map {
+				margin: 6px -4px 4px;
+				display: flex;
+				justify-content: center;
+			}
+			.minimap {
+				display: block;
+				filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.45));
+			}
+			.hud-time {
+				font-family: var(--display);
+				font-size: 34px;
+				font-variant-numeric: tabular-nums;
+				letter-spacing: 1px;
+			}
+			.hud-laps > div,
+			.hud-best {
+				display: flex;
+				justify-content: space-between;
+				gap: 16px;
+				font-weight: 800;
+				font-size: 14px;
+				font-variant-numeric: tabular-nums;
+				color: var(--muted);
+			}
+			.hud-best {
+				color: var(--yellow);
+				margin-top: 4px;
+			}
+			.hud-laps.big > div {
+				font-size: 18px;
+			}
+
+			/* ---------- results ---------- */
+			.results-table {
+				display: flex;
+				flex-direction: column;
+				gap: 6px;
+			}
+			.result-row {
+				display: grid;
+				grid-template-columns: 40px 44px 1fr auto auto;
+				align-items: center;
+				gap: 12px;
+				padding: 6px 14px;
+				border-radius: 12px;
+				background: rgba(255, 255, 255, 0.05);
+				font-weight: 800;
+				animation: pop 0.25s ease-out backwards;
+			}
+			.result-row:nth-child(2) {
+				animation-delay: 0.04s;
+			}
+			.result-row:nth-child(3) {
+				animation-delay: 0.08s;
+			}
+			.result-row:nth-child(4) {
+				animation-delay: 0.12s;
+			}
+			.result-row:nth-child(5) {
+				animation-delay: 0.16s;
+			}
+			.result-row:nth-child(6) {
+				animation-delay: 0.2s;
+			}
+			.result-row:nth-child(7) {
+				animation-delay: 0.24s;
+			}
+			.result-row:nth-child(8) {
+				animation-delay: 0.28s;
+			}
+			.result-row.me {
+				background: linear-gradient(90deg, rgba(255, 204, 26, 0.35), rgba(255, 204, 26, 0.08));
+				outline: 2px solid var(--yellow);
+			}
+			.result-row img {
+				width: 40px;
+				height: 40px;
+				object-fit: contain;
+				image-rendering: pixelated;
+			}
+			.result-row .place {
+				font-family: var(--display);
+				font-size: 26px;
+				text-align: center;
+			}
+			.result-row .time {
+				font-variant-numeric: tabular-nums;
+				color: var(--muted);
+			}
+			.result-row .pts {
+				color: var(--yellow);
+				min-width: 48px;
+				text-align: right;
+			}
+			.tt-time {
+				font-family: var(--display);
+				font-size: 64px;
+				text-align: center;
+				color: var(--yellow);
+			}
+			.pause {
+				width: min(380px, 100%);
+			}
+
+			/* ---------- online ---------- */
+			.field {
+				display: flex;
+				flex-direction: column;
+				gap: 6px;
+				font-weight: 900;
+				font-size: 13px;
+				letter-spacing: 1px;
+				text-transform: uppercase;
+				color: var(--muted);
+			}
+			.field input,
+			.join-row input {
+				font: inherit;
+				font-size: 18px;
+				font-weight: 800;
+				text-transform: none;
+				letter-spacing: 0;
+				color: var(--text);
+				background: rgba(255, 255, 255, 0.08);
+				border: 1px solid var(--panel-border);
+				border-radius: 12px;
+				padding: 12px 14px;
+				outline: none;
+			}
+			.field input:focus,
+			.join-row input:focus {
+				border-color: var(--yellow);
+			}
+			.join-row {
+				display: flex;
+				gap: 10px;
+			}
+			.join-row input {
+				flex: 1;
+				min-width: 0;
+				font-family: var(--display);
+				font-size: 24px;
+				letter-spacing: 6px;
+				text-transform: uppercase;
+			}
+			.room-code {
+				font-family: var(--display);
+				letter-spacing: 6px;
+				color: var(--yellow);
+				background: rgba(255, 204, 26, 0.12);
+				border: 2px dashed rgba(255, 204, 26, 0.6);
+				border-radius: 12px;
+				padding: 0 12px;
+				cursor: copy;
+			}
+			.lobby .result-row .time {
+				font-size: 13px;
+			}
+			.lobby-value {
+				flex: 0 !important;
+				white-space: nowrap;
+				color: var(--yellow);
+			}
+			.waiting {
+				align-self: center;
+				font-weight: 800;
+				color: var(--muted);
+				animation: blink 1.6s ease-in-out infinite;
+			}
+			@keyframes blink {
+				50% {
+					opacity: 0.45;
+				}
+			}
+			.error {
+				color: #ff6b5e;
+				font-weight: 800;
+			}
+
+			@media (max-width: 600px) {
+				.panel {
+					padding: 18px;
+				}
+				.result-row {
+					grid-template-columns: 30px 32px 1fr auto;
+				}
+				.result-row .time {
+					display: none;
+				}
+			}
 		</style>
 	</head>
 
-	<body class="state-upload hud-visible">
+	<body>
 		<canvas id="canvas3d"></canvas>
-
-		<div id="hud-peek" aria-hidden="true"></div>
-
-		<div id="hud">
-			<label
-				>Track
-				<select id="kcls"></select
-			></label>
-			<label
-				>Language
-				<select id="klang"></select
-			></label>
-			<label
-				>Laps
-				<select id="klaptype"></select
-			></label>
-			<label
-				>Controls
-				<select id="kcontrols"></select
-			></label>
-			<label
-				>Camera
-				<select id="kcam"></select
-			></label>
-			<button type="button" id="btn-fullscreen" class="hud-btn">Fullscreen</button>
-		</div>
-
-		<div id="menu-overlay">
-			<!-- State 1: no ROM -->
-			<div id="screen-upload" class="menu-screen hidden">
-				<h1 class="menu-title">Mario Kart JS</h1>
-				<p class="menu-subtitle">
-					To play, you must provide a Mario Kart DS ROM (.nds). The file will be stored locally in your browser.
-				</p>
-				<button id="btn-upload" class="menu-btn">Choose ROM file</button>
-				<p class="menu-hint">You must legally own the game to use its ROM.</p>
-			</div>
-
-			<!-- State 2: ROM present, ready to initialize -->
-			<div id="screen-ready" class="menu-screen hidden">
-				<h1 class="menu-title">ROM loaded</h1>
-				<p class="menu-subtitle">Configure your game below, then initialize the game engine.</p>
-				<button id="btn-init" class="menu-btn menu-btn--secondary">Initialize game</button>
-			</div>
-
-			<!-- Loading -->
-			<div id="screen-loading" class="menu-screen hidden">
-				<div class="loading-spinner"></div>
-				<h1 class="menu-title">Loading…</h1>
-				<p class="menu-subtitle">Preparing resources, please wait.</p>
-			</div>
-
-			<!-- State 3: game initialized, ready to start -->
-			<div id="screen-start" class="menu-screen hidden">
-				<h1 class="menu-title">Ready!</h1>
-				<p class="menu-subtitle">The track is loaded. Press Start to begin the race.</p>
-				<button id="btn-start" class="menu-btn">Start</button>
-			</div>
-		</div>
-
+		<div id="race-hud" hidden></div>
+		<div id="ui" class="ui-root" hidden></div>
 		<input type="file" id="fileIn" style="display: none" accept=".nds,application/x-nintendo-ds-rom" />
 	</body>
 </html>

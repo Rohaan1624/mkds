@@ -13,7 +13,16 @@ import { nitroRender } from "../render/nitroRender";
 import { items_IngameRes } from "./ingameRes";
 import { courseScene } from "./scenes/courseScene";
 
+/** Multiplayer hooks (installed by src/net). Only items owned by a non-puppet kart are reported. */
+export type ItemNetHooks = {
+	onSpawn(item: Item): void;
+	onRelease(item: Item, forward: number): void;
+	onDie(item: Item): void;
+};
+
 export class ItemController {
+	static net: ItemNetHooks | null = null;
+
 	scene: courseScene;
 	items: Item[];
 	curInd: number;
@@ -47,8 +56,14 @@ export class ItemController {
 	createItem(type: keyof items_IngameRes, kart: Kart) {
 		// KartItems._createItem
 		const item = new Item(this.scene, kart, type, this.curInd++);
+		// Same on every client: grouped shells create their children in the same order everywhere.
+		item.netId = `${this.scene.karts.indexOf(kart)}:${kart.itemSeq++}`;
 		this.items.push(item);
 		return item;
+	}
+
+	findByNetId(netId: string) {
+		return this.items.find((it) => it.netId === netId) ?? null;
 	}
 
 	removeItem(item: Item) {

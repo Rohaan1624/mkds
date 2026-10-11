@@ -1,18 +1,39 @@
+var fs = require("fs");
+var path = require("path");
 var liveServer = require("live-server");
 
+// Serves the first .nds file found in rom/ (or the repo root) at /rom.nds, so the game can
+// load it without the file picker. Both locations are gitignored.
+function findLocalRom() {
+	for (const dir of [path.join(__dirname, "rom"), __dirname]) {
+		if (!fs.existsSync(dir)) continue;
+		const file = fs.readdirSync(dir).find((f) => f.toLowerCase().endsWith(".nds"));
+		if (file) return path.join(dir, file);
+	}
+	return null;
+}
+
+function serveLocalRom(req, res, next) {
+	if (req.url.split("?")[0] !== "/rom.nds") return next();
+	const rom = findLocalRom();
+	if (!rom) {
+		res.statusCode = 404;
+		return res.end("No .nds file in rom/");
+	}
+	res.setHeader("Content-Type", "application/octet-stream");
+	res.setHeader("Content-Length", fs.statSync(rom).size);
+	fs.createReadStream(rom).pipe(res);
+}
+
 var params = {
-	port: 8181, // Set the server port. Defaults to 8080.
-	host: "0.0.0.0", // Set the address to bind to. Defaults to 0.0.0.0 or process.env.IP.
-	open: false, // When false, it won't load your browser by default.
-	ignore: "scss,my/templates", // comma-separated string for paths to ignore
-	file: "index.html", // When set, serve this file (server root relative) for every 404 (useful for single-page applications)
-	wait: 1000, // Waits for all changes, before reloading. Defaults to 0 sec.
-	mount: [["/components", "./node_modules"]], // Mount a directory to a route.
-	logLevel: 2, // 0 = errors only, 1 = some, 2 = lots
-	middleware: [
-		function (req, res, next) {
-			next();
-		},
-	], // Takes an array of Connect-compatible middleware that are injected into the server middleware stack
+	port: Number(process.env.PORT) || 8181,
+	host: "0.0.0.0",
+	root: __dirname,
+	open: false,
+	ignore: "rom,test,node_modules,src",
+	wait: 500,
+	mount: [["/components", "./node_modules"]],
+	logLevel: 1,
+	middleware: [serveLocalRom],
 };
 liveServer.start(params);

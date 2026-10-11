@@ -11,22 +11,12 @@ export function uiPx(value: number, scale: number): number {
 	return Math.round(value * scale);
 }
 
+/** The 3D view fills the whole window (widescreen); only the DS-style HUD keeps its reference scale. */
 export function fitCanvasToWindow(windowWidth: number, windowHeight: number) {
-	let width: number;
-	let height: number;
-
-	if (windowWidth / windowHeight > GAME_ASPECT_RATIO) {
-		height = windowHeight;
-		width = Math.floor(height * GAME_ASPECT_RATIO);
-	} else {
-		width = windowWidth;
-		height = Math.floor(width / GAME_ASPECT_RATIO);
-	}
-
 	return {
-		width,
-		height,
-		offsetX: Math.floor((windowWidth - width) / 2),
-		offsetY: Math.floor((windowHeight - height) / 2),
+		width: Math.floor(windowWidth),
+		height: Math.floor(windowHeight),
+		offsetX: 0,
+		offsetY: 0,
 	};
 }

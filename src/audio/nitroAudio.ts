@@ -41,6 +41,7 @@ export type nitroAudioSound = {
 
 export class nitroAudio {
 	static ctx: AudioContext;
+	static paused = false;
 	private static sounds: nitroAudioSound[] = [];
 	private static sdat: sdat;
 	private static _tickInterval: ReturnType<typeof setInterval> | null = null;
@@ -60,7 +61,16 @@ export class nitroAudio {
 		void nitroAudio._ensureRunning();
 	}
 
+	/** Pause all audio (e.g. the in-race pause menu). */
+	static setPaused(paused: boolean) {
+		nitroAudio.paused = paused;
+		if (!nitroAudio.ctx) return;
+		if (paused) void nitroAudio.ctx.suspend();
+		else nitroAudio._ensureRunning();
+	}
+
 	private static _ensureRunning() {
+		if (nitroAudio.paused) return;
 		if (nitroAudio.ctx.state === "suspended") {
 			void nitroAudio.ctx.resume();
 		}
@@ -104,6 +114,7 @@ export class nitroAudio {
 	}
 
 	static tick() {
+		if (nitroAudio.paused) return;
 		for (let i = 0; i < nitroAudio.sounds.length; i++) {
 			const snd = nitroAudio.sounds[i];
 			snd.seq.tick();

@@ -22,6 +22,7 @@ import { NitroEmitter } from "../particles/nitroEmitter";
 import { nitroAnimator, nitroAnimator_matStack } from "../render/nitroAnimator";
 import { nitroModel } from "../render/nitroModel";
 import { KartItems } from "./kartItems";
+import { Lakitu } from "./lakitu";
 
 type KartCollisionSounds = {
 	hit?: number;
@@ -60,6 +61,30 @@ type kart_checkpoint = nkm_section_CPOI | (nkm_section_MEPO & { respawn: 1 });
 
 const REMOTE_KART_SFX_MUL = 0.35;
 const LOOP_SOUND_GAIN = 2;
+
+const RESCUE_FALL_FRAMES = 40;
+const RESCUE_CARRY_FRAMES = 85;
+const RESCUE_START_HEIGHT = 110;
+const RESCUE_DROP_HEIGHT = 18;
+
+/** Visual state of a kart sent over the network (see src/net). */
+export type KartNetState = {
+	p: vec3;
+	v: vec3;
+	d: number; // physicalDir
+	o: number; // driftOff
+	n: vec3; // kartNormal
+	s: number; // speed
+	a: number; // driveAnimF
+	w: number; // wheel turn
+	b: boolean; // boosting
+	dmg: number; // damageType
+	dm: number[] | null; // damageMat
+	g: number; // race progress (getPosition)
+};
+
+/** RaceEffect.spa emitter for the exhaust flame jet. */
+const BOOST_FLAME_EMITTER = 19;
 
 export class Kart {
 	pos: vec3;
@@ -128,6 +153,17 @@ export class Kart {
 	checkPointNumber: number;
 	OOB: number;
 	wheelParticles: NitroEmitter[];
+	/** Driven by network snapshots instead of local physics (other players, or the host's CPUs). */
+	netPuppet = false;
+	/** Multiplayer: called when something on this client hits a kart owned by another client. */
+	static onPuppetDamaged: ((kart: Kart, damageType: number) => void) | null = null;
+	private _applyingNetDamage = false;
+	/** Per-kart item counter, used for network item ids. */
+	itemSeq = 0;
+	netState: KartNetState | null = null;
+	private _rescue: { t: number; respawn: nkm_section_KTPJ; lakitu: Lakitu | null } | null = null;
+	/** Exhaust flames shown while a mushroom/boost panel/mini-turbo boost is active. */
+	boostParticles: NitroEmitter[];
 	private _nkm: nkm;
 	private _startLine: nkm_section_KTPS;
 	private _passLine: nkm_section_KTPS | nkm_section_KTP2;
@@ -281,6 +317,15 @@ export class Kart {
 		this._scene.particles.push(this.wheelParticles[0]);
 		this._scene.particles.push(this.wheelParticles[1]);
 
+		this.boostParticles = [
+			new NitroEmitter(this._scene, this, -1, [0.15, 0.35, -1]),
+			new NitroEmitter(this._scene, this, -1, [-0.15, 0.35, -1]),
+		];
+		for (const em of this.boostParticles) {
+			em.pause = true;
+			this._scene.particles.push(em);
+		}
+
 		this._nkm = this._scene.nkm;
 		this._startLine = this._nkm.sections["KTPS"].entries[0];
 		this._passLine = this._nkm.sections["KTP2"].entries[0] || this._startLine;
@@ -394,6 +439,9 @@ export class Kart {
 					]),
 					1 / 16
 				);
+				// Exhausts sit between and slightly above the rear wheels.
+				const wo = this.wheelParticles[i - 2].offset;
+				this.boostParticles[i - 2].offset = [wo[0] * 0.45, wo[1] + 5 / 16, wo[2] - 1 / 16];
 			}
 		}
 
@@ -462,6 +510,133 @@ export class Kart {
 		}
 	}
 
+	captureNetState(): KartNetState {
+		const r = (x: number) => Math.round(x * 100) / 100;
+		const v3 = (v: vec3): vec3 => [r(v[0]), r(v[1]), r(v[2])];
+		return {
+			p: v3(this.pos),
+			v: v3(this.vel),
+			d: r(this.physicalDir),
+			o: r(this.driftOff),
+			n: v3(this.kartNormal),
+			s: r(this.speed),
+			a: this.driveAnimF,
+			w: r(this._wheelTurn),
+			b: this.boostMT + this.boostNorm > 0,
+			dmg: this.damageType,
+			dm: this.damageMat ? Array.from(this.damageMat, r) : null,
+			g: r(this.getPosition()),
+		};
+	}
+
+	/** Applies the latest (interpolated) network state. No physics, input or items run for puppets. */
+	private _puppetUpdate() {
+		const st = this.netState;
+		if (!st) return;
+		// The model, wheel and driver draw matrices are only rebuilt when this is set.
+		this._updateMat = true;
+		this.pos = vec3.clone(st.p);
+		this.vel = vec3.clone(st.v);
+		this.physicalDir = st.d;
+		this.angle = st.d;
+		this.driftOff = st.o;
+		this.kartNormal = vec3.clone(st.n);
+		this.speed = st.s;
+		this.driveAnimF = Math.round(st.a);
+		this._wheelTurn = st.w;
+		this.boostNorm = 0;
+		this.boostMT = st.b ? 1 : 0;
+
+		if (st.dmg !== this.damageType) {
+			if (st.dmg >= 0) {
+				this._applyingNetDamage = true;
+				this.damage(st.dmg);
+				this._applyingNetDamage = false;
+			} else {
+				this.anim.setAnim(this.charRes.driveA);
+				this.animMode = "drive";
+				this.specialControlHandler = false;
+				this.damageType = -1;
+			}
+		}
+		this.damageMat = st.dm ? (mat4.clone(st.dm as unknown as mat4) as mat4) : null;
+
+		this.basis = this._buildBasis();
+		const mat = mat4.fromTranslation(mat4.create(), this.pos);
+		this.mat = mat4.mul(mat, mat, this.basis);
+		if (this.damageMat != null) mat4.mul(mat, mat, this.damageMat);
+
+		const moving = this.speed > 0.5;
+		this.wheelParticles[0].pause = !moving;
+		this.wheelParticles[1].pause = !moving;
+		for (const em of this.boostParticles) {
+			if (st.b && (em.dead || em.curPrio < 1)) em.setEmitter(BOOST_FLAME_EMITTER, 1);
+			em.pause = !st.b;
+		}
+	}
+
+	/** Fell off the course: drop held items and let Lakitu fish us back out. */
+	private _startRescue() {
+		this.playCharacterSound(0);
+		const current = this._checkpoints[this.checkPointNumber];
+		const respawn =
+			current == null
+				? this._respawns[(Math.random() * this._respawns.length) | 0] //todo: deterministic
+				: this._respawns[current.respawn];
+		this.OOB = 0;
+		if (this.drifting) this._endDrift();
+		this.boostMT = 0;
+		this.boostNorm = 0;
+		this.items.dropHeld();
+		this._rescue = { t: 0, respawn, lakitu: null };
+	}
+
+	/** Advances the rescue. Returns true while the rescue has control of the kart. */
+	private _updateRescue(): boolean {
+		const r = this._rescue!;
+		r.t++;
+		if (r.t <= RESCUE_FALL_FRAMES) {
+			// Keep tumbling down (or sinking) for a moment.
+			this.vel[0] *= 0.94;
+			this.vel[2] *= 0.94;
+			this.vel[1] = Math.max(this.vel[1] - 0.35, -6);
+			vec3.add(this.pos, this.pos, this.vel);
+			return true;
+		}
+
+		const respawn = r.respawn;
+		if (r.lakitu == null) {
+			this.physicalDir = (180 - respawn.angle[1]) * (Math.PI / 180);
+			this.angle = this.physicalDir;
+			this.driftOff = 0;
+			this.speed = 0;
+			this.vel = vec3.create();
+			if (this.controller.setRouteID != null) this.controller.setRouteID(respawn.id1);
+			this.kartNormal = [0, 1, 0];
+			this.kartTargetNormal = [0, 1, 0];
+			r.lakitu = new Lakitu(this._scene, this);
+			this._scene.entities.push(r.lakitu);
+		}
+
+		const carry = (r.t - RESCUE_FALL_FRAMES) / RESCUE_CARRY_FRAMES;
+		if (carry < 1) {
+			// Lowered from high above the respawn point, easing out, with a gentle sway on the line.
+			const ease = 1 - Math.pow(1 - carry, 3);
+			const height = RESCUE_START_HEIGHT + (RESCUE_DROP_HEIGHT - RESCUE_START_HEIGHT) * ease;
+			const sway = Math.sin(r.t * 0.15) * 3 * (1 - carry);
+			this.pos = vec3.add(vec3.create(), respawn.pos, [sway, height, 0]);
+			this.airTime = 10;
+			return true;
+		}
+
+		// Let go: back to normal physics, falling the last few units onto the track.
+		r.lakitu.release();
+		this._rescue = null;
+		this.vel = [0, -0.5, 0];
+		this.airTime = 10;
+		return false;
+	}
+
 	draw(view: mat4, pMatrix: mat4) {
 		this.drawWheels(view, pMatrix);
 		this.drawKart(view, pMatrix, gl);
@@ -470,6 +645,10 @@ export class Kart {
 
 	update(scene: courseScene) {
 		if (window.debug.kartnoupdate && !this.local) {
+			return;
+		}
+		if (this.netPuppet) {
+			this._puppetUpdate();
 			return;
 		}
 		if (this.placement != this.lastPlacement) {
@@ -492,6 +671,15 @@ export class Kart {
 		this._onGround = this.airTime < 5;
 
 		this._kartAnim = (this._kartAnim + 1) % 8;
+
+		if (this.OOB > 0 && this._rescue == null) this._startRescue();
+		if (this._rescue != null && this._updateRescue()) {
+			// The normal update (which rebuilds the draw matrix) is skipped while Lakitu has the kart.
+			this.basis = this._buildBasis();
+			this.mat = mat4.mul(mat4.create(), mat4.fromTranslation(mat4.create(), this.pos), this.basis);
+			return;
+		}
+
 		const input = this.controller.fetchInput();
 		this.lastInput = input;
 		this.items.update(input);
@@ -611,6 +799,12 @@ export class Kart {
 		this.wheelParticles[0].pause = !isMoving;
 		this.wheelParticles[1].pause = !isMoving;
 
+		const boosting = this.boostMT + this.boostNorm > 0;
+		for (const em of this.boostParticles) {
+			if (boosting && (em.dead || em.curPrio < 1)) em.setEmitter(BOOST_FLAME_EMITTER, 1);
+			em.pause = !boosting;
+		}
+
 		//end sound update
 
 		if (!this.preboost) {
@@ -664,22 +858,6 @@ export class Kart {
 				}
 			} else {
 				//default kart mode
-				if (this.OOB > 0) {
-					this.playCharacterSound(0);
-					const current = this._checkpoints[this.checkPointNumber];
-					let respawn;
-					if (current == null)
-						respawn = this._respawns[(Math.random() * this._respawns.length) | 0]; //todo: deterministic
-					else respawn = this._respawns[current.respawn];
-					this.physicalDir = (180 - respawn.angle[1]) * (Math.PI / 180);
-					this.angle = this.physicalDir;
-					this.speed = 0;
-					this.vel = vec3.create();
-					this.pos = vec3.clone(respawn.pos);
-					vec3.add(this.pos, this.pos, [0, 16, 0]);
-					if (this.controller.setRouteID != null) this.controller.setRouteID(respawn.id1);
-					this.OOB = 0;
-				}
 				let groundEffect = 0;
 				if (this._lastCollided != -1) {
 					groundEffect = MKDS_COLTYPE.PHYS_MAP[this._lastCollided];
@@ -1019,6 +1197,11 @@ export class Kart {
 	}
 
 	damage(damageType: number) {
+		if (this.netPuppet && !this._applyingNetDamage) {
+			// Another client owns this kart: ask it to apply the hit (shows up here via its snapshots).
+			Kart.onPuppetDamaged?.(this, damageType);
+			return;
+		}
 		if (this.damageType >= damageType) {
 			return; //we are already damaged
 		}
@@ -1033,6 +1216,7 @@ export class Kart {
 		}
 		this.boostMT = 0;
 		this.boostNorm = 0;
+		this.items.dropHeld();
 
 		switch (damageType) {
 			case MKDSCONST.DAMAGE_SPIN:
@@ -1276,20 +1460,35 @@ export class Kart {
 		}
 	}
 
-	private _checkpointProgress(check: nkm_section_CPOI) {
-		const dist = vec2.sub([0, 0], [check.x1, check.z1], [this.pos[0], this.pos[2]]);
-		const dot = vec2.dot(dist, [check.sinus, check.cosinus]);
-		return Math.max(0, Math.min(1, 1 - Math.abs(dot) / 0xffff));
+	/**
+	 * Signed distance to a checkpoint line (sinus/cosinus are its unit normal): positive while the line is
+	 * still ahead, negative once we've driven past it (matching the crossing test in _positionChanged).
+	 */
+	private _checkpointDist(check: nkm_section_CPOI) {
+		return (check.x1 - this.pos[0]) * check.sinus + (check.z1 - this.pos[2]) * check.cosinus;
 	}
 
+	/**
+	 * Race progress: laps and checkpoints passed, plus how far we are between the last checkpoint and
+	 * the next one, so placement changes the moment someone overtakes rather than at the next checkpoint.
+	 */
 	getPosition() {
+		if (this.netPuppet) return this.netState?.g ?? 0;
 		if (this._checkpoints.length == 0) return 0;
 
-		const targets = this._futureChecks.length > 0 ? this._futureChecks : [0];
 		let progress = 0;
-		for (let i = 0; i < targets.length; i++) {
-			const check = this._checkpoints[targets[i]] as nkm_section_CPOI;
-			progress = Math.max(progress, this._checkpointProgress(check));
+		const cur = this._checkpoints[this.checkPointNumber] as nkm_section_CPOI;
+		const targets = this._futureChecks.length > 0 ? this._futureChecks : [0];
+		if (cur?.x1 != null) {
+			// Negative before the start line (on the grid), so the grid order is kept.
+			const fromCur = -this._checkpointDist(cur);
+			let toNext = Infinity;
+			for (const t of targets) {
+				const next = this._checkpoints[t] as nkm_section_CPOI;
+				if (next?.x1 != null) toNext = Math.min(toNext, Math.max(0, this._checkpointDist(next)));
+			}
+			const span = Math.abs(fromCur) + toNext;
+			if (isFinite(toNext) && span > 0) progress = Math.max(-0.999, Math.min(0.999, fromCur / span));
 		}
 
 		return this.checkPointNumber + progress + this.lapNumber * this._checkpoints.length;

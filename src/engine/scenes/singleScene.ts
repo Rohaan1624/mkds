@@ -15,6 +15,32 @@ import { controlRaceCPU } from "../controls/controlRaceCPU";
 import { IngameRes } from "../ingameRes";
 import { MKCONST_course_obj, MKDSCONST } from "../mkdsConst";
 import { courseScene } from "./courseScene";
+import { controlPlayer } from "../../game/controlPlayer";
+import { controlNetwork } from "../controls/controlNetwork";
+
+export type RacerSetup = { charN: number; kartN: number };
+
+export type NetRacer = RacerSetup & { kind: "local" | "cpu" | "remote" };
+
+export type RaceSetup = {
+	/** null = attract mode: every kart is CPU-driven and no HUD is shown. */
+	player: RacerSetup | null;
+	opponents: RacerSetup[];
+	/** Multiplayer: the full kart list in grid order (same on every client), overriding player/opponents. */
+	net?: { racers: NetRacer[]; localIndex: number };
+};
+
+export type RaceResult = {
+	kart: Kart;
+	charN: number;
+	isPlayer: boolean;
+	place: number;
+	/** Finish time in seconds, or null if the kart hadn't finished when the race ended. */
+	time: number | null;
+};
+
+/** How long to keep watching after the player crosses the line before the race counts as over. */
+const POST_FINISH_FRAMES = 6 * 60;
 import { sceneDrawer } from "./sceneDrawer";
 
 export class singleScene {
@@ -30,9 +56,22 @@ export class singleScene {
 	mchar: number;
 	mkart: number;
 	advanceTimes: number[];
+	chars: number[] = [];
 	raceStarted: boolean;
-	constructor(course: string, wsInstance: WebSocket, res: IngameRes, autostart = true) {
+	setup: RaceSetup | null;
+	raceFrames: number;
+	lapTimes: number[];
+	finishTimes: Map<Kart, number>;
+	playerFinishFrame: number | null;
+	private _lastLap: number;
+	constructor(course: string, wsInstance: WebSocket, res: IngameRes, autostart = true, setup: RaceSetup | null = null) {
 		this.res = res; //gameRes
+		this.setup = setup;
+		this.raceFrames = 0;
+		this.lapTimes = [];
+		this.finishTimes = new Map();
+		this.playerFinishFrame = null;
+		this._lastLap = 1;
 
 		this.mode = undefined!;
 		this.mchar = Math.floor(Math.random() * 12);
@@ -56,12 +95,69 @@ export class singleScene {
 		});
 	}
 
+	/** Multiplayer: apply received snapshots before the step, send ours after it. */
+	onBeforeUpdate: (() => void) | null = null;
+	onAfterUpdate: (() => void) | null = null;
+
 	update() {
 		if (this.activeScene != null) {
+			this.onBeforeUpdate?.();
 			this.activeScene.update();
 			//simulate what a server would do
 			this.updateServer();
+			this.trackRace();
+			this.onAfterUpdate?.();
 		}
+	}
+
+	private trackRace() {
+		if (this.activeScene.mode.id !== 2) return;
+		this.raceFrames++;
+		const time = this.raceFrames / 60;
+
+		for (const k of this.activeScene.finishers) {
+			if (!this.finishTimes.has(k)) this.finishTimes.set(k, time);
+		}
+
+		if ((this.setup?.player || this.setup?.net) && this.myKart.lapNumber !== this._lastLap) {
+			if (this.myKart.lapNumber > this._lastLap && this._lastLap <= MKDSCONST.MAX_LAP) {
+				const prev = this.lapTimes.reduce((a, b) => a + b, 0);
+				this.lapTimes.push(time - prev);
+			}
+			this._lastLap = this.myKart.lapNumber;
+			if (this.myKart.lapNumber > MKDSCONST.MAX_LAP && this.playerFinishFrame == null) {
+				this.playerFinishFrame = this.raceFrames;
+			}
+		}
+	}
+
+	/** Seconds since GO (0 before the race starts). Freezes once the player finishes. */
+	get raceTime() {
+		const frames = this.playerFinishFrame ?? this.raceFrames;
+		return frames / 60;
+	}
+
+	get playerFinished() {
+		return this.playerFinishFrame != null;
+	}
+
+	/** True a few seconds after the player crosses the line, or once every kart has finished. */
+	get raceOver() {
+		if (this.playerFinishFrame == null) return false;
+		return this.raceFrames - this.playerFinishFrame >= POST_FINISH_FRAMES || this.activeScene.finishers.length === this.activeScene.karts.length;
+	}
+
+	getResults(): RaceResult[] {
+		const scene = this.activeScene;
+		const finished = scene.finishers.slice();
+		const rest = scene.karts.filter((k) => !finished.includes(k)).sort((a, b) => b.getPosition() - a.getPosition());
+		return [...finished, ...rest].map((kart, i) => ({
+			kart,
+			charN: this.chars[scene.karts.indexOf(kart)],
+			isPlayer: kart === this.myKart && (this.setup?.player != null || this.setup?.net != null),
+			place: i + 1,
+			time: this.finishTimes.get(kart) ?? null,
+		}));
 	}
 
 	private updateServer() {
@@ -99,12 +195,42 @@ export class singleScene {
 		} else throw "custom tracks are not implemented yet!";
 	}
 
+	private setUpNetCourse(mainNarc: narc, texNarc: narc, course: MKCONST_course_obj, net: NonNullable<RaceSetup["net"]>) {
+		const controllers = { local: controlPlayer, cpu: controlRaceCPU, remote: controlNetwork };
+		const chars = net.racers.map((r, i) => ({
+			charN: r.charN,
+			kartN: r.kartN,
+			controller: controllers[r.kind] as typeof Controls,
+			raceCam: i === net.localIndex,
+			extraParams: [],
+		}));
+		this.chars = chars.map((c) => c.charN);
+		this.activeScene = new courseScene(mainNarc, texNarc, course, chars, {}, this.res);
+		net.racers.forEach((r, i) => {
+			if (r.kind === "remote") this.activeScene.karts[i].netPuppet = true;
+		});
+		this.myKart = this.activeScene.karts[net.localIndex];
+		this.myKart.local = true;
+		// Wait for the host's "go" (startRace) so everyone's countdown starts together.
+		this.raceStarted = false;
+		this.mode = { id: -1, time: 0, frameDiv: 0, mode: -1 };
+		this.activeScene.entities.push(
+			new PlacementUI(this.activeScene, this.myKart),
+			new LapCountUI(this.activeScene, this.myKart),
+			new ItemUi(this.activeScene, this.myKart)
+		);
+	}
+
 	private setUpCourse(mainNarc: narc, texNarc: narc, course: MKCONST_course_obj, autostart: boolean) {
+		if (this.setup?.net) return this.setUpNetCourse(mainNarc, texNarc, course, this.setup.net);
 		const chars = [];
+		const setup = this.setup;
+		const player: RacerSetup = setup?.player ?? { charN: this.mchar, kartN: this.mkart };
+		const playerController = setup ? (setup.player ? controlPlayer : controlRaceCPU) : MKDSCONST.USER_CONTROLLER;
 		chars.push({
-			charN: this.mchar,
-			kartN: this.mkart,
-			controller: MKDSCONST.USER_CONTROLLER,
+			charN: player.charN,
+			kartN: player.kartN,
+			controller: playerController,
 			raceCam: true,
 			extraParams: [
 				{ k: "name", v: "single" },
@@ -112,13 +238,13 @@ export class singleScene {
 			],
 		});
 
-		for (let i = 0; i < 7; i++) {
-			const tchar = Math.floor(Math.random() * 12);
-			const tkart = Math.floor(Math.random() * 0x24);
-
+		const opponents =
+			setup?.opponents ??
+			Array.from({ length: 7 }, () => ({ charN: Math.floor(Math.random() * 12), kartN: Math.floor(Math.random() * 0x24) }));
+		for (const o of opponents) {
 			chars.push({
-				charN: tchar,
-				kartN: tkart,
+				charN: o.charN,
+				kartN: o.kartN,
 				controller: controlRaceCPU,
 				raceCam: false,
 				extraParams: [
@@ -127,11 +253,13 @@ export class singleScene {
 				],
 			});
 		}
+		this.chars = chars.map((c) => c.charN);
 
 		this.activeScene = new courseScene(mainNarc, texNarc, course, chars, {}, this.res);
 
 		this.myKart = this.activeScene.karts[0];
-		this.myKart.local = true;
+		const attract = setup != null && setup.player == null;
+		this.myKart.local = !attract;
 
 		this.mode = {
 			id: autostart ? 0 : -1,
@@ -145,6 +273,7 @@ export class singleScene {
 				...this.mode,
 			});
 		}
+		if (attract) return;
 		this.activeScene.entities.push(
 			new PlacementUI(this.activeScene, this.myKart),
 			new LapCountUI(this.activeScene, this.myKart),
