@@ -21,6 +21,7 @@ import { nsbmd_modelData } from "../formats/nsbmd";
 import { NitroEmitter } from "../particles/nitroEmitter";
 import { nitroAnimator, nitroAnimator_matStack } from "../render/nitroAnimator";
 import { nitroModel } from "../render/nitroModel";
+import { nitroRender } from "../render/nitroRender";
 import { KartItems } from "./kartItems";
 import { Lakitu } from "./lakitu";
 
@@ -81,7 +82,14 @@ export type KartNetState = {
 	dmg: number; // damageType
 	dm: number[] | null; // damageMat
 	g: number; // race progress (getPosition)
+	f: number; // item effect bits (FX_BITS)
 };
+
+/** Item effect durations, in frames @ 60 fps. */
+export const FX_FRAMES = { star: 450, bill: 330, boo: 420, shrink: 390, ink: 300 };
+const FX_BITS = { star: 1, bill: 2, boo: 4, shrink: 8 } as const;
+const SHRINK_SCALE = 0.55;
+const BILL_SCALE = 20;
 
 /** RaceEffect.spa emitter for the exhaust flame jet. */
 const BOOST_FLAME_EMITTER = 19;
@@ -160,6 +168,13 @@ export class Kart {
 	private _applyingNetDamage = false;
 	/** Per-kart item counter, used for network item ids. */
 	itemSeq = 0;
+	/** Active item effects, frames remaining. */
+	fx = { star: 0, bill: 0, boo: 0, shrink: 0, ink: 0 };
+	/** Item effect start/end hooks (star music etc.), installed by the item code. */
+	static onFxChange: ((kart: Kart, fx: keyof Kart["fx"], active: boolean) => void) | null = null;
+	private _billCtl: Controls | null = null;
+	private _billMat = mat4.create();
+	private _preBillCtl: Controls | null = null;
 	netState: KartNetState | null = null;
 	private _rescue: { t: number; respawn: nkm_section_KTPJ; lakitu: Lakitu | null } | null = null;
 	/** Exhaust flames shown while a mushroom/boost panel/mini-turbo boost is active. */
@@ -403,6 +418,14 @@ export class Kart {
 
 	private _recalcMat(view: mat4) {
 		const mat = mat4.mul(mat4.create(), view, this.mat);
+		if (this.fx.shrink > 0) {
+			// Shrink around the point under the kart so it stays on the ground.
+			const r = this._params.colRadius;
+			mat4.translate(mat, mat, [0, -r, 0]);
+			mat4.scale(mat, mat, [SHRINK_SCALE, SHRINK_SCALE, SHRINK_SCALE]);
+			mat4.translate(mat, mat, [0, r, 0]);
+		}
+		this._billMat = mat4.clone(mat);
 		const xscale = 1 + Math.cos((this._kartAnim / 4) * Math.PI) * 0.015;
 		let yscale = 1 + Math.cos(((this._kartAnim + 4) / 4) * Math.PI) * 0.015;
 
@@ -463,12 +486,40 @@ export class Kart {
 		this._updateMat = false;
 	}
 
+	/** Star tint / Boo transparency. Returns false when this kart shouldn't be drawn at all. */
+	private _beginFxDraw() {
+		if (this.fx.boo > 0) {
+			if (!this.local) return false; // invisible to everyone else
+			nitroRender.setColMult([1, 1, 1, 0.35]);
+		} else if (this.fx.star > 0) {
+			const t = this._scene.frame * 0.35;
+			nitroRender.setColMult([0.75 + 0.5 * Math.sin(t), 0.75 + 0.5 * Math.sin(t + 2.1), 0.75 + 0.5 * Math.sin(t + 4.2), 1]);
+		}
+		return true;
+	}
+
+	private _endFxDraw() {
+		if (this.fx.boo > 0 || this.fx.star > 0) nitroRender.setColMult([1, 1, 1, 1]);
+	}
+
 	drawChar(view: mat4, pMatrix: mat4) {
+		if (this.fx.bill > 0 || !this._beginFxDraw()) return;
 		this._charRes.model.draw(this._drawMat.character, pMatrix, this.animMat);
+		this._endFxDraw();
 	}
 
 	drawKart(view: mat4, pMatrix: mat4, _gl: CustomWebGLRenderingContext) {
 		if (this._updateMat) this._recalcMat(view);
+		if (this.fx.bill > 0) {
+			// The kart becomes a Bullet Bill.
+			const killer = this._scene.gameRes.getKiller();
+			const m = mat4.translate(mat4.create(), this._billMat, [0, -this._params.colRadius * 0.4, 0]);
+			mat4.scale(m, m, [BILL_SCALE, BILL_SCALE, BILL_SCALE]);
+			const anim = killer.anim ? killer.anim.setFrame(0, 0, this._scene.frame) : undefined;
+			killer.model.draw(m, pMatrix, anim);
+			return;
+		}
+		if (!this._beginFxDraw()) return;
 		//if we're in simple shadows mode, draw the kart's stencil shadow.
 		// Disabled stencil shadow path:
 		/*
@@ -500,13 +551,79 @@ export class Kart {
 		for (let i = 0; i < this._kartPolys.length; i++) {
 			this._kartRes.drawPoly(this._drawMat.kart, pMatrix, 0, this._kartPolys[i], simpleMatStack);
 		}
+		this._endFxDraw();
 	}
 
 	drawWheels(view: mat4, pMatrix: mat4) {
 		if (this._updateMat) this._recalcMat(view);
+		if (this.fx.bill > 0 || !this._beginFxDraw()) return;
 		const wheelMod = this._tireRes[this._offsets.name];
 		for (let i = 0; i < 4; i++) {
 			wheelMod.draw(this._drawMat.wheels[i], pMatrix, simpleMatStack);
+		}
+		this._endFxDraw();
+	}
+
+	get invulnerable() {
+		return this.fx.star > 0 || this.fx.bill > 0 || this.fx.boo > 0;
+	}
+
+	/** Mushroom: same boost as a dash panel. */
+	mushroomBoost() {
+		this.boostNorm = this._BOOSTTIME;
+		this.speed = Math.max(this.speed, this._params.topSpeed);
+	}
+
+	startFx(kind: "star" | "boo") {
+		const was = this.fx[kind] > 0;
+		this.fx[kind] = FX_FRAMES[kind];
+		if (kind === "star") this.fx.shrink = 0;
+		if (!was) Kart.onFxChange?.(this, kind, true);
+	}
+
+	/** Bullet Bill: the course AI steers while we fly at high speed, knocking karts away. */
+	startBill(ai: Controls) {
+		this.items.dropHeld();
+		if (this.fx.bill <= 0) {
+			this._preBillCtl = this.controller;
+			this._billCtl = ai;
+			this.controller = ai;
+		}
+		this.fx.bill = FX_FRAMES.bill;
+		this.fx.shrink = 0;
+		if (this.drifting) this._endDrift();
+		Kart.onFxChange?.(this, "bill", true);
+	}
+
+	/** Lightning: spin out, drop items and shrink. Star, Bullet Bill and Boo protect you. */
+	thunderHit() {
+		if (this.invulnerable) return;
+		this.damage(MKDSCONST.DAMAGE_SPIN);
+		this.fx.shrink = FX_FRAMES.shrink;
+	}
+
+	private _billStuck = 0;
+	/** Frames after being squashed during which a big kart can't squash us again. */
+	private _stompImmune = 0;
+
+	private _tickFx() {
+		// A Bullet Bill pinned against a wall (the course AI can't always steer out) ends early.
+		if (this._stompImmune > 0) this._stompImmune--;
+		if (this.fx.bill > 1) {
+			this._billStuck = this.speed < 1 ? this._billStuck + 1 : 0;
+			if (this._billStuck > 45) this.fx.bill = 1;
+		}
+		for (const k of Object.keys(this.fx) as (keyof Kart["fx"])[]) {
+			if (this.fx[k] <= 0) continue;
+			if (--this.fx[k] === 0) {
+				if (k === "bill") {
+					// Hand control back (unless the race ended and the finish AI took over meanwhile).
+					if (this.controller === this._billCtl && this._preBillCtl) this.controller = this._preBillCtl;
+					this._billCtl = this._preBillCtl = null;
+					this.boostNorm = Math.max(this.boostNorm, 30);
+				}
+				Kart.onFxChange?.(this, k, false);
+			}
 		}
 	}
 
@@ -526,6 +643,7 @@ export class Kart {
 			dmg: this.damageType,
 			dm: this.damageMat ? Array.from(this.damageMat, r) : null,
 			g: r(this.getPosition()),
+			f: (Object.keys(FX_BITS) as (keyof typeof FX_BITS)[]).reduce((bits, k) => bits | (this.fx[k] > 0 ? FX_BITS[k] : 0), 0),
 		};
 	}
 
@@ -546,6 +664,7 @@ export class Kart {
 		this._wheelTurn = st.w;
 		this.boostNorm = 0;
 		this.boostMT = st.b ? 1 : 0;
+		for (const k of Object.keys(FX_BITS) as (keyof typeof FX_BITS)[]) this.fx[k] = st.f & FX_BITS[k] ? 2 : 0;
 
 		if (st.dmg !== this.damageType) {
 			if (st.dmg >= 0) {
@@ -671,6 +790,7 @@ export class Kart {
 		this._onGround = this.airTime < 5;
 
 		this._kartAnim = (this._kartAnim + 1) % 8;
+		this._tickFx();
 
 		if (this.OOB > 0 && this._rescue == null) this._startRescue();
 		if (this._rescue != null && this._updateRescue()) {
@@ -865,7 +985,14 @@ export class Kart {
 				}
 
 				const effect = this._params.colParam[groundEffect];
-				const top = this._params.topSpeed * effect.topSpeedMul; //if you let go of accel, drift ends anyway, so always accel in drift.
+				let top = this._params.topSpeed * effect.topSpeedMul; //if you let go of accel, drift ends anyway, so always accel in drift.
+				// Star and Bullet Bill ignore off-road slowdown; being shrunk makes you slower.
+				if (this.fx.star > 0) top = this._params.topSpeed * 1.15;
+				if (this.fx.bill > 0) {
+					top = this._params.topSpeed * 1.9;
+					this.speed += (top - this.speed) * 0.08;
+				}
+				if (this.fx.shrink > 0) top *= 0.75;
 
 				const boosting = this.boostNorm + this.boostMT > 0;
 				if (this.specialControlHandler) {
@@ -1202,6 +1329,7 @@ export class Kart {
 			Kart.onPuppetDamaged?.(this, damageType);
 			return;
 		}
+		if (this.invulnerable) return;
 		if (this.damageType >= damageType) {
 			return; //we are already damaged
 		}
@@ -1255,6 +1383,7 @@ export class Kart {
 
 	private _damagedControls() {
 		if (--this.damageTime == 0) {
+			if (this.damageType == MKDSCONST.DAMAGE_STOMP) this._stompImmune = 120;
 			this.anim.setAnim(this.charRes.driveA);
 			this.animMode = "drive";
 			this.specialControlHandler = false;
@@ -1517,6 +1646,25 @@ export class Kart {
 			if (this != ok) {
 				const dist = vec3.dist(this.pos, ok.pos);
 				if (dist < 16) {
+					const meStrong = this.fx.star > 0 || this.fx.bill > 0;
+					const okStrong = ok.fx.star > 0 || ok.fx.bill > 0;
+					if (meStrong && !okStrong) {
+						ok.damage(MKDSCONST.DAMAGE_FLIP);
+						continue;
+					}
+					if (okStrong && !meStrong) {
+						this.damage(MKDSCONST.DAMAGE_FLIP);
+						continue;
+					}
+					if (this.fx.shrink > 0 && ok.fx.shrink <= 0 && ok.fx.boo <= 0) {
+						if (this._stompImmune <= 0) this.damage(MKDSCONST.DAMAGE_STOMP);
+						continue;
+					}
+					if (ok.fx.shrink > 0 && this.fx.shrink <= 0 && this.fx.boo <= 0) {
+						if (ok._stompImmune <= 0) ok.damage(MKDSCONST.DAMAGE_STOMP);
+						continue;
+					}
+					if (this.fx.boo > 0 || ok.fx.boo > 0) continue; // Boo: pass straight through
 					this.kartBounce(ok);
 					ok.kartBounce(this);
 				}

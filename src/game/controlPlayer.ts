@@ -24,7 +24,7 @@ export class controlPlayer implements Controls {
 			accel: Input.held("accel"),
 			decel: Input.held("brake"),
 			drift: Input.held("drift"),
-			item: Input.held("item"),
+			item: Input.heldOrTapped("item"),
 			turn: Input.steer(),
 			airTurn: Input.aim(),
 		};

@@ -24,10 +24,12 @@ const itemsTex: Record<string, number> = {
 	killer: 28,
 	koura_group_g: 19, // green
 	koura_group_r: 17, // red
+	banana_group: 24,
+	kinoko_group: 15, // x3; x2 = 14, x1 = 13 (see update)
 };
 
 /** Item icons the roulette cycles through while an item box is being decided. */
-const ROULETTE = ["koura_g", "banana", "kinoko", "koura_r", "f_box", "star", "bomb", "koura_group_g", "thunder", "teresa", "gesso", "koura_w"];
+const ROULETTE = ["koura_g", "banana", "kinoko", "koura_r", "f_box", "star", "bomb", "koura_group_g", "thunder", "teresa", "gesso", "koura_w", "killer", "kinoko_p", "banana_group"];
 /** Frames each icon stays on screen during the roulette. */
 const ROULETTE_FRAMES = 3;
 
@@ -128,6 +130,7 @@ export class ItemUi implements SceneEntity {
 		} else {
 			this._rouletteFrame = 0;
 			tex = itemsTex[items.currentItem ?? ""] ?? blank;
+			if (items.currentItem === "kinoko_group") tex = [13, 13, 14, 15][Math.min(3, items.uses)];
 		}
 		this.currentItem = items.currentItem;
 		if (tex !== this._shownTex) {

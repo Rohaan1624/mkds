@@ -13,6 +13,10 @@ import { fileStore } from "../engine/storage/fileStore";
 import { getUiScale, uiPx } from "../ui/uiScale";
 import { Input } from "./input";
 import { Minimap } from "./minimap";
+import { SoundBox } from "../audio/soundBox";
+import type { nitroAudioSound } from "../audio/nitroAudio";
+import { ItemEffects } from "../entities/itemEffects";
+import { Kart } from "../entities/kart";
 import { NetGame, NetResult, StartInfo } from "../net/netGame";
 import {
 	CHARACTERS,
@@ -847,6 +851,10 @@ function enterRoom(net: NetGame) {
 		win.mainScene?.startRace();
 	};
 	net.onResults = (order) => showNetResults(order);
+	net.onWaiting = (names) => {
+		const el = state.screen === "loading" ? root.querySelector(".intro-title") : null;
+		if (el && names.length) el.textContent = "Waiting for " + names.join(", ") + "…";
+	};
 	net.onBackToLobby = () => {
 		state.racing = false;
 		hud.hidden = true;
@@ -1058,8 +1066,61 @@ function padClickLoop() {
 	padWasDown = down;
 }
 
+// ---------------------------------------------------------------- item screen effects
+
+const STAR_MUSIC = 73;
+let starMusic: nitroAudioSound | null = null;
+
+function screenFx(id: string) {
+	let el = document.getElementById(id);
+	if (!el) {
+		el = document.createElement("div");
+		el.id = id;
+		document.body.appendChild(el);
+	}
+	return el;
+}
+
+function setupItemFx() {
+	ItemEffects.ui = {
+		flash() {
+			const el = screenFx("fx-flash");
+			el.classList.remove("on");
+			void el.offsetWidth; // restart the animation
+			el.classList.add("on");
+		},
+		ink(frames) {
+			const el = screenFx("fx-ink");
+			el.innerHTML = Array.from({ length: 9 }, () => {
+				const size = 18 + Math.random() * 26;
+				return `<span style="left:${Math.random() * 90 - 5}%;top:${Math.random() * 80 - 5}%;width:${size}vmin;height:${size * (0.8 + Math.random() * 0.4)}vmin"></span>`;
+			}).join("");
+			el.style.setProperty("--ink-time", frames / 60 + "s");
+			el.classList.remove("on");
+			void el.offsetWidth;
+			el.classList.add("on");
+		},
+	};
+	// Star music while your own kart is invincible.
+	Kart.onFxChange = (kart, fx, active) => {
+		const scene = win.mainScene;
+		if (fx !== "star" || !scene || kart !== scene.myKart) return;
+		const course = scene.activeScene;
+		if (active) {
+			if (course.musicPlayer) nitroAudio.kill(course.musicPlayer);
+			if (starMusic) nitroAudio.kill(starMusic);
+			starMusic = SoundBox.music(STAR_MUSIC);
+		} else {
+			if (starMusic) nitroAudio.kill(starMusic);
+			starMusic = null;
+			if (!scene.playerFinished) course.musicPlayer = SoundBox.music(course.music);
+		}
+	};
+}
+
 export const Frontend = {
 	init() {
+		setupItemFx();
 		root = document.getElementById("ui")!;
 		hud = document.getElementById("race-hud")!;
 		hud.hidden = true;

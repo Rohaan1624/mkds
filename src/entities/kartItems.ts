@@ -3,8 +3,14 @@
 import { nitroAudio, nitroAudioSound } from "../audio/nitroAudio";
 import { SoundBox } from "../audio/soundBox";
 import { ItemController } from "../engine/itemController";
+import { ItemEffects } from "./itemEffects";
+import { rollItem } from "./itemOdds";
 import { Item } from "./item";
 import { Kart } from "./kart";
+
+/** Items used straight from the slot instead of becoming an object on the track. */
+const INSTANT_ITEMS = new Set<string | null>(["kinoko", "kinoko_group", "kinoko_p", "star", "thunder", "gesso", "teresa", "killer"]);
+const GOLDEN_FRAMES = 450;
 
 export class KartItems {
 	static items = [
@@ -15,7 +21,16 @@ export class KartItems {
 		"bomb",
 		"koura_group_g",
 		"koura_group_r",
-		// 'koura_group-bomb-7' bug (too many bomb)
+		"banana_group",
+		"koura_w",
+		"kinoko",
+		"kinoko_group",
+		"kinoko_p",
+		"star",
+		"thunder",
+		"gesso",
+		"teresa",
+		"killer",
 	];
 	kart: Kart;
 	scene: Scene;
@@ -63,6 +78,7 @@ export class KartItems {
 	}
 
 	update(input: InputData) {
+		this.tick();
 		const pressed = input.item && !this._lastItemState;
 		const released = this._lastItemState && !input.item;
 		if (this._itemReleaseDebounce > 0) this._itemReleaseDebounce--;
@@ -74,15 +90,11 @@ export class KartItems {
 					if (this._carouselSfx != null) {
 						nitroAudio.kill(this._carouselSfx);
 					}
-					//decide on an item
-					const item = KartItems.randomItem();
-
-					if (this.kart.local) {
-						console.log(item);
-					}
-
+					//decide on an item, with the game's own odds for our position
+					const racers = this.scene.karts.filter((k) => k.active).length;
+					const item = rollItem(this.scene.gameRes, this.kart.placement || racers, racers);
 					this._sfx(() => SoundBox.itemCarouselPick(this._specialItems.indexOf(item) != -1));
-					this.currentItem = item;
+					this._setItem(item);
 				} else {
 					//if item button is pressed, we speed up the carousel
 					if (pressed && this.heldItem == null) {
@@ -90,7 +102,9 @@ export class KartItems {
 					}
 				}
 			} else if (this.heldItem == null) {
-				if (pressed) {
+				if (pressed && INSTANT_ITEMS.has(this.currentItem)) {
+					this._useInstant(this.currentItem);
+				} else if (pressed) {
 					//fire?
 					this.heldItem = this._createItem();
 					console.log(`${this.currentItem} drop`);
@@ -141,6 +155,63 @@ export class KartItems {
 		} else {
 			held.release(-1); // bananas, fake boxes etc. fall where you were
 		}
+	}
+
+	/** Uses left for multi-use items (triple mushroom). */
+	uses = 0;
+	/** Golden mushroom: frames left of unlimited boosts once first used. */
+	goldenTime = 0;
+
+	private _setItem(item: string) {
+		this.currentItem = item;
+		this.empty = false;
+		this.uses = item === "kinoko_group" ? 3 : 1;
+		this.goldenTime = 0;
+	}
+
+	private _clearItem() {
+		this.currentItem = null;
+		this.empty = true;
+		this.uses = 0;
+		this.goldenTime = 0;
+	}
+
+	private _useInstant(item: string) {
+		switch (item) {
+			case "kinoko":
+			case "kinoko_group":
+				this.kart.mushroomBoost();
+				if (--this.uses <= 0) this._clearItem();
+				break;
+			case "kinoko_p":
+				if (this.goldenTime <= 0) this.goldenTime = GOLDEN_FRAMES;
+				this.kart.mushroomBoost();
+				break;
+			default:
+				this._clearItem();
+				ItemEffects.use(item, this.kart, this.scene);
+		}
+		this.kart.playCharacterSound(7);
+	}
+
+	/** Called every frame by the kart (golden mushroom timer). */
+	tick() {
+		if (this.goldenTime > 0 && --this.goldenTime === 0 && this.currentItem === "kinoko_p") this._clearItem();
+	}
+
+	/** Boo: hand over whatever is in the item slot (not rolling, not mid golden-mushroom). */
+	takeItem(): string | null {
+		if (this.empty || this.currentItem == null || this.goldenTime > 0) return null;
+		const item = this.currentItem;
+		this._clearItem();
+		return item;
+	}
+
+	/** Boo: receive a stolen item if the slot is free. */
+	giveItem(item: string) {
+		if (!this.empty || this.heldItem != null) return;
+		if (this._carouselSfx != null) nitroAudio.kill(this._carouselSfx);
+		this._setItem(item);
 	}
 
 	getItem(_specific: string | null): boolean {

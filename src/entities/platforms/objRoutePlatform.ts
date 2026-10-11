@@ -36,7 +36,7 @@ export class ObjRoutePlatform implements SceneEntityObject, lsc_taget {
 		this._res = undefined!;
 		this._genCol = undefined!;
 		this._scene = scene;
-		this._movVel = undefined!;
+		this._movVel = [0, 0, 0]; // until the route starts moving; things can land on it before then
 
 		this.pos = vec3.clone(this._obji.pos);
 		//this.angle = vec3.clone(obji.angle);

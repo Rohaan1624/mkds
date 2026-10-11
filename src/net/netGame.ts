@@ -10,6 +10,7 @@
 import { ItemController } from "../engine/itemController";
 import type { NetRacer, singleScene } from "../engine/scenes/singleScene";
 import type { Item } from "../entities/item";
+import { ItemEffectEvent, ItemEffects } from "../entities/itemEffects";
 import { Kart, KartNetState } from "../entities/kart";
 import { NetMsg, NetTransport } from "./transport";
 
@@ -27,6 +28,9 @@ const SNAPSHOT_EVERY = 3;
 const INTERP_DELAY_MS = 110;
 const MAX_EXTRAPOLATE_MS = 150;
 const LOAD_TIMEOUT_MS = 20000;
+/** The host schedules the start this far ahead so every client's countdown begins at the same instant. */
+const START_LEAD_MS = 1200;
+const CLOCK_PINGS = 6;
 /** After the first human finishes, everyone else gets this long before results are forced. */
 const FINISH_GRACE_FRAMES = 30 * 60;
 
@@ -59,6 +63,8 @@ export class NetGame {
 	onLobby: () => void = () => {};
 	onStart: (info: StartInfo, racers: NetRacer[], localSlot: number) => void = () => {};
 	onGo: () => void = () => {};
+	/** Loading screen: names of racers still loading. */
+	onWaiting: (names: string[]) => void = () => {};
 	onResults: (order: NetResult[]) => void = () => {};
 	onBackToLobby: () => void = () => {};
 	onClosed: (reason: string) => void = () => {};
@@ -73,6 +79,9 @@ export class NetGame {
 	private _sentFinish = false;
 	private _gone = new Set<string>();
 	private _raceCounter = 0;
+	/** Guest: host clock minus our clock (performance.now), from the lowest-latency ping. */
+	private _clockOffset = 0;
+	private _bestRtt = Infinity;
 
 	private constructor(transport: NetTransport, me: Me) {
 		this.transport = transport;
@@ -102,6 +111,7 @@ export class NetGame {
 	static async join(code: string, me: Me) {
 		const g = new NetGame(await NetTransport.join(code), me);
 		g.transport.send({ t: "hello", ...me });
+		g._syncClock();
 		return g;
 	}
 
@@ -183,6 +193,7 @@ export class NetGame {
 		scene.onBeforeUpdate = () => this._beforeUpdate();
 		scene.onAfterUpdate = () => this._afterUpdate();
 		Kart.onPuppetDamaged = (kart, type) => this._send({ t: "hurt", k: this._slotOf(kart), d: type });
+		ItemEffects.net = (ev) => this._send(ev);
 		ItemController.net = {
 			onSpawn: (item) => this._send({ t: "isp", id: item.netId, ty: item.type, k: this._slotOf(item.owner) }),
 			onRelease: (item, f) => this._sendRelease(item, f),
@@ -199,7 +210,10 @@ export class NetGame {
 	private _markLoaded(id: string) {
 		this._loaded.add(id);
 		const humans = this.start!.racers.filter((r) => r.id && !this._gone.has(r.id));
-		if (humans.every((r) => this._loaded.has(r.id!))) this._hostGo();
+		const waiting = humans.filter((r) => !this._loaded.has(r.id!)).map((r) => r.name);
+		this.transport.broadcast({ t: "wait", names: waiting });
+		this.onWaiting(waiting);
+		if (waiting.length === 0) this._hostGo();
 	}
 
 	private _hostGo() {
@@ -207,8 +221,33 @@ export class NetGame {
 		if (this._loadTimer) clearTimeout(this._loadTimer);
 		this._loadTimer = null;
 		this._loaded.clear();
-		this.transport.broadcast({ t: "go" });
-		this._go();
+		// Start at a shared moment (host clock) so all race times count from the same instant.
+		const at = performance.now() + START_LEAD_MS;
+		this.transport.broadcast({ t: "go", at });
+		this._goAt(at);
+	}
+
+	/** `at` is in host clock time. */
+	private _goAt(at: number) {
+		const local = at - this._clockOffset;
+		setTimeout(() => this.phase === "loading" && this._go(), Math.max(0, local - performance.now()));
+	}
+
+	/** Guest: estimate the host clock offset (NTP-style, keeping the lowest-latency sample). */
+	private _syncClock() {
+		if (this.isHost) return;
+		for (let i = 0; i < CLOCK_PINGS; i++) {
+			setTimeout(() => this.transport.send({ t: "ping", c: performance.now() }), i * 150);
+		}
+	}
+
+	private _onPong(c: number, h: number) {
+		const now = performance.now();
+		const rtt = now - c;
+		if (rtt < this._bestRtt) {
+			this._bestRtt = rtt;
+			this._clockOffset = h - (c + rtt / 2);
+		}
 	}
 
 	private _go() {
@@ -224,6 +263,7 @@ export class NetGame {
 		this._scene = null;
 		ItemController.net = null;
 		Kart.onPuppetDamaged = null;
+		ItemEffects.net = null;
 	}
 
 	// ------------------------------------------------------------ race sync
@@ -440,10 +480,20 @@ export class NetGame {
 				this.onClosed(String(m.reason));
 				return;
 			case "start":
+				this._syncClock();
 				this._beginLoading(m.info as StartInfo);
 				return;
 			case "go":
-				if (this.phase === "loading") this._go();
+				if (this.phase === "loading") this._goAt(m.at as number);
+				return;
+			case "wait":
+				if (this.phase === "loading") this.onWaiting(m.names as string[]);
+				return;
+			case "ping":
+				if (this.isHost) this.transport.send({ t: "pong", c: m.c, h: performance.now() }, from);
+				return;
+			case "pong":
+				this._onPong(m.c as number, m.h as number);
 				return;
 			case "res":
 				this._showResults(m.order as NetResult[]);
@@ -467,6 +517,12 @@ export class NetGame {
 				return;
 			case "irel":
 				if (this._scene) this._onItemRelease(m as unknown as { id: string; f: number; p: number[]; v: number[] });
+				return;
+			case "thunder":
+			case "ink":
+			case "boo":
+			case "booitem":
+				if (this._scene) ItemEffects.receive(m as unknown as ItemEffectEvent, this._scene.activeScene, (ev) => this._send(ev));
 				return;
 			case "hurt": {
 				const slot = m.k as number;

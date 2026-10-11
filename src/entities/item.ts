@@ -18,7 +18,8 @@ import { BananaC } from "./items/droppable/bananaC";
 import { BombC } from "./items/droppable/bombC";
 import { FakeBoxC } from "./items/droppable/fakeBoxC";
 import { GreenShellC, RedShellC } from "./items/shells/shellC";
-import { GreenShellGroup, RedShellGroup } from "./items/shells/shellGroup";
+import { BlueShellC } from "./items/shells/blueShellC";
+import { BananaGroup, GreenShellGroup, RedShellGroup } from "./items/shells/shellGroup";
 import { ItemController } from "../engine/itemController";
 import { Kart } from "./kart";
 
@@ -34,7 +35,8 @@ const itemTypes: { [x: string]: typeof KartItemEntity } = {
 	//groups
 	$koura_group_g: GreenShellGroup,
 	$koura_group_r: RedShellGroup,
-	//'$banana_group': BananaGroupC,
+	$banana_group: BananaGroup,
+	$koura_w: BlueShellC,
 
 	//one use items
 	//'$kinoko': MushroomC,

@@ -163,6 +163,7 @@ export class Minimap {
 		// Racers, last place first so the leaders (and you) draw on top.
 		const order = this.racers.slice().sort((a, b) => (a.isPlayer ? 1 : b.isPlayer ? -1 : b.kart.placement - a.kart.placement));
 		for (const r of order) {
+			if (!r.kart.active || (r.kart.fx.boo > 0 && !r.isPlayer)) continue; // Boo: invisible
 			const [x, y] = this._toMap(r.kart.pos[0], r.kart.pos[2]);
 			const rad = (r.isPlayer ? 9 : 7) * d;
 			if (r.isPlayer) {

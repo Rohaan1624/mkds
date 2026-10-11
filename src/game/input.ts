@@ -44,13 +44,18 @@ const keysTapped = new Set<string>();
 let padButtons: boolean[] = [];
 let padAxes: number[] = [];
 const prevHeld = new Map<Action, boolean>();
+/** Actions tapped since the race last read them, so a tap shorter than a (slow) frame still counts. */
+const latched = new Set<Action>();
 const pressedThisPoll = new Set<Action>();
 
 function onKeyDown(e: KeyboardEvent) {
 	if (isTextField(e.target)) return;
 	// A focused slider handles left/right natively (one step per press).
 	if (e.target instanceof HTMLInputElement && e.target.type === "range" && (e.code === "ArrowLeft" || e.code === "ArrowRight")) return;
-	if (!e.repeat) keysTapped.add(e.code);
+	if (!e.repeat) {
+		keysTapped.add(e.code);
+		for (const a of Object.keys(KEY_BINDINGS) as Action[]) if (KEY_BINDINGS[a].includes(e.code)) latched.add(a);
+	}
 	keysDown.add(e.code);
 	// Stop the page scrolling or buttons re-firing while driving with arrows/space.
 	// Space must still reach a focused menu button so it can activate it.
@@ -120,6 +125,7 @@ export const Input = {
 			const now = Input.held(action);
 			const tapped = KEY_BINDINGS[action].some((k) => keysTapped.has(k));
 			if ((now && !prevHeld.get(action)) || tapped) pressedThisPoll.add(action);
+			if (now && !prevHeld.get(action)) latched.add(action); // gamepad presses
 			prevHeld.set(action, now);
 		}
 		keysTapped.clear();
@@ -134,6 +140,12 @@ export const Input = {
 	/** True only on the poll where the action went from released to held. */
 	pressed(action: Action) {
 		return pressedThisPoll.has(action);
+	},
+
+	/** Held now, or tapped at any point since the last call (for buttons a quick tap must not miss). */
+	heldOrTapped(action: Action) {
+		const tapped = latched.delete(action);
+		return Input.held(action) || tapped;
 	},
 
 	/** Analog steering, -1 (left) to 1 (right). */

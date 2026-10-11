@@ -2,7 +2,9 @@ import { nitroAudio, nitroAudioSound } from "../../../audio/nitroAudio";
 import { SoundBox } from "../../../audio/soundBox";
 import { Item } from "../../item";
 
+/** Three items held together: shells orbit the kart, bananas trail behind it in a line. */
 abstract class ShellGroup implements KartItemEntity {
+	protected layout: "orbit" | "trail" = "orbit";
 	canBeHeld: boolean;
 	canBeDropped: boolean;
 	rotationPeriod: number;
@@ -38,7 +40,7 @@ abstract class ShellGroup implements KartItemEntity {
 		});
 
 		SoundBox.shellGroupEquip(this.item);
-		this.sound = SoundBox.shellGroupFly(this.item);
+		this.sound = type.startsWith("koura") ? SoundBox.shellGroupFly(this.item) : null;
 	}
 
 	onlyHeld() {
@@ -62,14 +64,16 @@ abstract class ShellGroup implements KartItemEntity {
 			return;
 		}
 
-		let slot = 0;
+		const rad = this.item.owner.params.colRadius;
 		for (let i = 0; i < children.length; i++) {
 			const child = children[i];
-			const angle = (slot / children.length + this.phase / this.rotationPeriod) * Math.PI * 2;
-			slot++;
-			const rad = this.item.owner.params.colRadius;
+			if (this.layout === "trail") {
+				child.holdPos = [0, -rad, -(rad + 6 + i * 9)];
+				continue;
+			}
+			const angle = (i / children.length + this.phase / this.rotationPeriod) * Math.PI * 2;
 			const dist = this.spinDist + rad;
-			child.holdPos = [-Math.sin(angle) * dist, -this.item.owner.params.colRadius, Math.cos(angle) * dist];
+			child.holdPos = [-Math.sin(angle) * dist, -rad, Math.cos(angle) * dist];
 		}
 		this.phase++;
 		this.phase %= this.rotationPeriod;
@@ -77,7 +81,7 @@ abstract class ShellGroup implements KartItemEntity {
 	}
 
 	release(forward: 1 | -1): boolean {
-		const toUse: Item | null | undefined = this.children.pop();
+		const toUse: Item | null | undefined = this.children.pop(); // trailing bananas: the back of the line
 		if (toUse && toUse != null) {
 			toUse.release(forward);
 		}
@@ -103,5 +107,12 @@ export class GreenShellGroup extends ShellGroup {
 export class RedShellGroup extends ShellGroup {
 	constructor(item: Item, scene: Scene) {
 		super(item, scene, "koura_r");
+	}
+}
+
+export class BananaGroup extends ShellGroup {
+	constructor(item: Item, scene: Scene) {
+		super(item, scene, "banana");
+		this.layout = "trail";
 	}
 }

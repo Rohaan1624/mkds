@@ -15,6 +15,9 @@ const ID_PREFIX = "mkdsweb-room-";
 const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no 0/O, 1/I
 /** ICE can take a while when it has to fall back to the relay. */
 const CONNECT_TIMEOUT_MS = 25000;
+const HEARTBEAT_MS = 1000;
+/** A peer silent this long is treated as gone (closed tab, crash, lost Wi-Fi). Long enough to cover a course load. */
+const PEER_TIMEOUT_MS = 12000;
 
 function randomCode(len = 5) {
 	let s = "";
@@ -33,13 +36,27 @@ export class NetTransport {
 
 	private _peer: Peer;
 	private _conns = new Map<string, DataConnection>();
+	private _lastSeen = new Map<string, number>();
 	private _closed = false;
+	private _heartbeat: ReturnType<typeof setInterval>;
+	private _onPageHide = () => this.close();
 
 	private constructor(peer: Peer, isHost: boolean, code: string) {
 		this._peer = peer;
 		this.isHost = isHost;
 		this.code = code;
 		this.myId = peer.id;
+		this._heartbeat = setInterval(() => this._tick(), HEARTBEAT_MS);
+		// Closing the tab says goodbye right away instead of leaving others waiting for a timeout.
+		window.addEventListener("pagehide", this._onPageHide);
+	}
+
+	private _tick() {
+		const now = performance.now();
+		for (const [id, c] of this._conns) {
+			if (c.open) c.send({ t: "hb" });
+			if (now - (this._lastSeen.get(id) ?? now) > PEER_TIMEOUT_MS) this._drop(id);
+		}
 	}
 
 	static async host(): Promise<NetTransport> {
@@ -99,22 +116,30 @@ export class NetTransport {
 
 	private _attach(conn: DataConnection) {
 		this._conns.set(conn.peer, conn);
+		this._lastSeen.set(conn.peer, performance.now());
 		conn.on("data", (data) => {
 			const msg = data as NetMsg & { _b?: 1 };
+			this._lastSeen.set(conn.peer, performance.now());
+			if (msg.t === "hb") return;
+			if (msg.t === "bye") return this._drop(conn.peer);
 			// Host relays broadcasts from one guest to the others.
 			if (this.isHost && msg._b) {
 				for (const [id, c] of this._conns) if (id !== conn.peer && c.open) c.send(msg);
 			}
 			this.onMessage(msg, conn.peer);
 		});
-		const gone = () => {
-			if (!this._conns.has(conn.peer)) return;
-			this._conns.delete(conn.peer);
-			if (this.isHost) this.onPeerLeave(conn.peer);
-			else this._shutdown("The host left the room.");
-		};
-		conn.on("close", gone);
-		conn.on("error", gone);
+		conn.on("close", () => this._drop(conn.peer));
+		conn.on("error", () => this._drop(conn.peer));
+	}
+
+	private _drop(peerId: string) {
+		const conn = this._conns.get(peerId);
+		if (!conn) return;
+		this._conns.delete(peerId);
+		this._lastSeen.delete(peerId);
+		conn.close();
+		if (this.isHost) this.onPeerLeave(peerId);
+		else this._shutdown("The host left the room.");
 	}
 
 	/** Host: to every guest. Guest: to the host, which relays it to everyone else. */
@@ -140,9 +165,19 @@ export class NetTransport {
 	private _shutdown(reason: string) {
 		if (this._closed) return;
 		this._closed = true;
-		for (const c of this._conns.values()) c.close();
+		clearInterval(this._heartbeat);
+		window.removeEventListener("pagehide", this._onPageHide);
+		for (const c of this._conns.values()) {
+			if (c.open) c.send({ t: "bye" });
+		}
+		// Give the goodbye a moment to go out before tearing the connections down.
+		const conns = [...this._conns.values()];
+		const peer = this._peer;
+		setTimeout(() => {
+			conns.forEach((c) => c.close());
+			peer.destroy();
+		}, 150);
 		this._conns.clear();
-		this._peer.destroy();
 		this.onClose(reason);
 	}
 

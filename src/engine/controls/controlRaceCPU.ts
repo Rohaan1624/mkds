@@ -9,6 +9,10 @@
 import { Kart } from "../../entities/kart";
 import { nkm, nkm_Section, nkm_section_CPAT, nkm_section_EPOI, nkm_section_MEPA, nkm_section_MEPO } from "../../formats/nkm";
 
+/** Frames at (near) zero speed before reversing, and before giving up and calling Lakitu. */
+const STUCK_REVERSE = 75;
+const STUCK_LAKITU = 240;
+
 type controlRaceCPU_path = nkm_section_CPAT | nkm_section_MEPA;
 type controlRaceCPU_point = nkm_section_EPOI | nkm_section_MEPO;
 
@@ -72,7 +76,7 @@ export class controlRaceCPU implements Controls {
 		//basically as a cpu, we're really dumb and need a constant supply of points to drive to.
 		//battle mode AI is a lot more complex, but since we're only going in one direction it can be kept simple.
 
-		const item = this.kart.local && !!window.keysArray[65];
+		const item = this.itemDecision();
 		const accel = true; //currently always driving forward. should change for sharp turns and when we get stuck on a wall
 		//(drive in direction of wall? we may need to reverse, "if stuck for too long we can just call lakitu and the players won't even notice" - Nintendo)
 
@@ -109,10 +113,23 @@ export class controlRaceCPU implements Controls {
 		const diff = this.dirDiff(dirToPt, physDir);
 		const turn = Math.min(Math.max(-1, diff * 3), 1);
 
+		// Stuck on a wall or object: back off for a moment, and if that doesn't work call Lakitu.
+		const k = this.kart;
+		if (!k.preboost && k.damageType < 0 && Math.abs(k.speed) < 0.5) this._stuck++;
+		else this._stuck = 0;
+		if (this._stuck > STUCK_LAKITU) {
+			this._stuck = 0;
+			k.OOB = 1;
+		} else if (this._stuck > STUCK_REVERSE && this._stuck < STUCK_REVERSE + 50) {
+			return { accel: false, decel: true, drift: false, item, turn: -turn, airTurn: 0 };
+		}
+
 		this.offTrans += 1 / 240;
 
 		if (this.offTrans >= 1) this.chooseNewOff();
-		this.item = !this.item;
+
+		// Inked by a Blooper: steering gets wobbly.
+		const inkWobble = this.kart.fx.ink > 0 ? Math.sin(this.kart.fx.ink * 0.15) * 0.45 : 0;
 
 		return {
 			accel: accel, //x
@@ -121,9 +138,37 @@ export class controlRaceCPU implements Controls {
 			item, //a
 
 			//-1 to 1, intensity.
-			turn: turn,
+			turn: Math.min(1, Math.max(-1, turn + inkWobble)),
 			airTurn: 0, //air excitebike turn, doesn't really have much function
 		};
+	}
+
+	private _stuck = 0;
+	private _itemWait = -1;
+	private _itemPressFrames = 0;
+
+	/**
+	 * CPU item use: a short random delay after getting an item, then tap the button (use / throw forward,
+	 * droppables fall behind). Orbiting/trailing groups get tapped again every so often.
+	 */
+	private itemDecision() {
+		if (this.kart.netPuppet || this.kart.fx.bill > 0) return false;
+		if (this._itemPressFrames > 0) {
+			this._itemPressFrames--;
+			return true;
+		}
+		const items = this.kart.items;
+		const hasItem = (!items.empty && items.currentItem != null) || items.heldItem != null;
+		if (!hasItem) {
+			this._itemWait = -1;
+			return false;
+		}
+		if (this._itemWait < 0) this._itemWait = 60 + Math.floor(Math.random() * 180);
+		if (--this._itemWait <= 0) {
+			this._itemPressFrames = 2;
+			this._itemWait = items.heldItem != null ? 50 + Math.floor(Math.random() * 90) : -1;
+		}
+		return false;
 	}
 
 	private chooseNewOff() {
@@ -144,7 +189,34 @@ export class controlRaceCPU implements Controls {
 
 	setRouteID(routeID: number) {
 		this.ePoiInd = routeID - 1;
+		this.recomputePath();
 		this.advancePoint();
+	}
+
+	/** Pick up the route from wherever the kart is now (e.g. Bullet Bill mid-race), aiming at the point ahead. */
+	snapToNearest() {
+		const pos = this.kart.pos;
+		const dir = this.kart.physicalDir;
+		const fwd = [Math.sin(dir), 0, -Math.cos(dir)];
+		let best = 0;
+		let bestScore = Infinity;
+		for (let i = 0; i < this.points.length; i++) {
+			const p = this.points[i].pos;
+			const dx = p[0] - pos[0],
+				dz = p[2] - pos[2];
+			const d = Math.hypot(dx, dz);
+			// Prefer points ahead of us.
+			const ahead = (dx * fwd[0] + dz * fwd[2]) / (d || 1);
+			const score = d * (ahead > 0 ? 1 : 3);
+			if (score < bestScore) {
+				bestScore = score;
+				best = i;
+			}
+		}
+		this.ePoiInd = best;
+		this.ePoi = this.points[best];
+		this.recomputePath();
+		this.calcDestNorm();
 	}
 
 	private advancePoint() {

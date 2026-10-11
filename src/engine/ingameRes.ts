@@ -17,6 +17,7 @@ import { nsbca } from "../formats/nsbca";
 import { nsbmd } from "../formats/nsbmd";
 import { nsbtx } from "../formats/nsbtx";
 import { spa } from "../formats/spa";
+import { nitroAnimator } from "../render/nitroAnimator";
 import { nitroModel } from "../render/nitroModel";
 import { TileFlattener } from "./2d/tileFlattener";
 import { MKDSCONST } from "./mkdsConst";
@@ -297,6 +298,23 @@ export class IngameRes {
 		};
 		this.characters[ind] = obj;
 		return this.characters[ind];
+	}
+
+	private _killer: { model: nitroModel; anim: nitroAnimator | null } | null = null;
+
+	/** The 3D Bullet Bill a kart turns into (KartModelMainA.carc), loaded on first use. */
+	getKiller() {
+		if (!this._killer) {
+			const arc = new narc(lz77.decompress(this.rom.getFile("/data/KartModelMainA.carc")!));
+			const bmd = new nsbmd(arc.getFile("/character/common/KillerItem.nsbmd")!);
+			const btx = arc.getFile("/character/common/KillerItem.nsbtx");
+			const bca = arc.getFile("/character/common/KillerItem.nsbca");
+			this._killer = {
+				model: new nitroModel(bmd, btx ? new nsbtx(btx, false) : null),
+				anim: bca ? new nitroAnimator(bmd, new nsbca(bca)) : null,
+			};
+		}
+		return this._killer;
 	}
 
 	getKart(ind: number) {
