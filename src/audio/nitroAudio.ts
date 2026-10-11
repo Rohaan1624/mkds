@@ -39,9 +39,33 @@ export type nitroAudioSound = {
 	obj: nitroAudioSoundTarget | null;
 };
 
+export type AudioVolume = { master: number; music: number; sfx: number };
+
+const VOLUME_KEY = "mkdsweb.volume";
+const DEFAULT_VOLUME: AudioVolume = { master: 0.8, music: 0.7, sfx: 0.9 };
+
+function loadVolume(): AudioVolume {
+	try {
+		const saved = JSON.parse(localStorage.getItem(VOLUME_KEY) || "{}");
+		const out = { ...DEFAULT_VOLUME };
+		for (const k of Object.keys(out) as (keyof AudioVolume)[]) {
+			if (typeof saved[k] === "number") out[k] = Math.max(0, Math.min(1, saved[k]));
+		}
+		return out;
+	} catch {
+		return { ...DEFAULT_VOLUME };
+	}
+}
+
 export class nitroAudio {
 	static ctx: AudioContext;
 	static paused = false;
+	/** Volume levels, 0..1, saved in localStorage. */
+	static volume: AudioVolume = loadVolume();
+	private static _master: GainNode;
+	/** Music = plain sequences (no sound archive); effects = everything played from an archive. */
+	private static _musicBus: GainNode;
+	private static _sfxBus: GainNode;
 	private static sounds: nitroAudioSound[] = [];
 	private static sdat: sdat;
 	private static _tickInterval: ReturnType<typeof setInterval> | null = null;
@@ -56,9 +80,36 @@ export class nitroAudio {
 
 		SSEQWaveCache.init(sdat, nitroAudio.ctx);
 		nitroAudio.sdat = sdat;
+		const ctx = nitroAudio.ctx;
+		nitroAudio._master = ctx.createGain();
+		nitroAudio._master.connect(ctx.destination);
+		nitroAudio._musicBus = ctx.createGain();
+		nitroAudio._musicBus.connect(nitroAudio._master);
+		nitroAudio._sfxBus = ctx.createGain();
+		nitroAudio._sfxBus.connect(nitroAudio._master);
+		nitroAudio._applyVolume();
 		nitroAudio._bindBackgroundAudio();
 		nitroAudio._startTickLoop();
 		void nitroAudio._ensureRunning();
+	}
+
+	static setVolume(v: Partial<AudioVolume>) {
+		Object.assign(nitroAudio.volume, v);
+		try {
+			localStorage.setItem(VOLUME_KEY, JSON.stringify(nitroAudio.volume));
+		} catch {
+			/* storage unavailable: keep for this session */
+		}
+		nitroAudio._applyVolume();
+	}
+
+	private static _applyVolume() {
+		if (!nitroAudio._master) return;
+		// Squared so the sliders feel even to the ear.
+		const curve = (x: number) => x * x;
+		nitroAudio._master.gain.value = curve(nitroAudio.volume.master);
+		nitroAudio._musicBus.gain.value = curve(nitroAudio.volume.music);
+		nitroAudio._sfxBus.gain.value = curve(nitroAudio.volume.sfx);
 	}
 
 	/** Pause all audio (e.g. the in-race pause menu). */
@@ -175,12 +226,13 @@ export class nitroAudio {
 			gainN: undefined!,
 		};
 
+		const bus = arcN == null ? nitroAudio._musicBus : nitroAudio._sfxBus;
 		let output;
 		if (obj != null) {
 			//if obj is not null then we have a 3d target to assign this sound to.
 			output = nitroAudio.ctx.createPanner();
 			sound.gainN = nitroAudio.ctx.createGain();
-			sound.gainN.connect(nitroAudio.ctx.destination);
+			sound.gainN.connect(bus);
 			output.connect(sound.gainN);
 			sound.panner = output;
 
@@ -189,7 +241,7 @@ export class nitroAudio {
 		} else {
 			output = nitroAudio.ctx.createGain();
 			sound.gainN = output;
-			output.connect(nitroAudio.ctx.destination);
+			output.connect(bus);
 		}
 
 		if (arcN == null) {

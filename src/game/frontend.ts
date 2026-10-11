@@ -5,7 +5,7 @@
 // The 3D engine itself is booted by index.html (window.initNitro); this module drives everything around it.
 //
 
-import { nitroAudio } from "../audio/nitroAudio";
+import { AudioVolume, nitroAudio } from "../audio/nitroAudio";
 import type { IngameRes } from "../engine/ingameRes";
 import { MKDSCONST, refreshSettings } from "../engine/mkdsConst";
 import { RaceResult, RaceSetup, RacerSetup, singleScene } from "../engine/scenes/singleScene";
@@ -136,6 +136,12 @@ function bind(selector: string, handler: (el: HTMLElement) => void) {
 
 // Spatial keyboard/gamepad navigation between [data-nav] elements.
 function moveFocus(dx: number, dy: number) {
+	const active = document.activeElement;
+	if (dx !== 0 && active instanceof HTMLInputElement && active.type === "range") {
+		active.value = String(Number(active.value) + dx * Number(active.step || 1));
+		active.dispatchEvent(new Event("input"));
+		return;
+	}
 	const items = [...root.querySelectorAll<HTMLElement>("[data-nav]")].filter((el) => !el.hasAttribute("disabled"));
 	if (items.length === 0) return;
 	const current = document.activeElement as HTMLElement;
@@ -418,16 +424,13 @@ function showCourseSelect() {
 
 function showOptions() {
 	const laps = MKDSCONST.MAX_LAP;
-	const music = (window as unknown as { debug: { audioMusic: boolean } }).debug.audioMusic;
 	setScreen(
 		h`<div class="panel">
 			<h2 class="screen-title">Options</h2>
 			<div class="option-row"><span>Laps</span>
 				<button class="btn toggle${laps === 3 ? " on" : ""}" data-nav data-autofocus data-laps="3">3</button>
 				<button class="btn toggle${laps === 5 ? " on" : ""}" data-nav data-laps="5">5</button></div>
-			<div class="option-row"><span>Music</span>
-				<button class="btn toggle${music ? " on" : ""}" data-nav data-music="1">On</button>
-				<button class="btn toggle${!music ? " on" : ""}" data-nav data-music="0">Off</button></div>
+			${volumeSliders()}
 			<div class="menu-row"><button class="btn" data-nav id="btn-back">← Back</button></div>
 		</div>`,
 		showMainMenu,
@@ -438,11 +441,49 @@ function showOptions() {
 		refreshSettings();
 		showOptions();
 	});
-	bind("[data-music]", (el) => {
-		(window as unknown as { debug: { audioMusic: boolean } }).debug.audioMusic = el.dataset.music === "1";
-		showOptions();
-	});
+	bindVolumeSliders();
 	bind("#btn-back", () => showMainMenu());
+}
+
+const VOLUME_LABELS: [keyof AudioVolume, string][] = [
+	["master", "Master volume"],
+	["music", "Music"],
+	["sfx", "Sound effects"],
+];
+
+function volumeSliders() {
+	return VOLUME_LABELS.map(([key, label]) => {
+		const v = Math.round(nitroAudio.volume[key] * 100);
+		return h`<label class="vol-row"><span>${label}</span>
+			<input type="range" min="0" max="100" step="5" value="${v}" data-nav data-vol="${key}" aria-label="${label}" />
+			<output>${v}%</output></label>`;
+	}).join("");
+}
+
+function bindVolumeSliders() {
+	root.querySelectorAll<HTMLInputElement>("[data-vol]").forEach((el) => {
+		el.addEventListener("input", () => {
+			nitroAudio.setVolume({ [el.dataset.vol!]: Number(el.value) / 100 });
+			el.nextElementSibling!.textContent = el.value + "%";
+		});
+	});
+}
+
+/** Volume screen for the in-race menus. */
+function showVolume(back: () => void) {
+	setScreen(
+		h`<div class="panel">
+			<h2 class="screen-title">Volume</h2>
+			${volumeSliders()}
+			<div class="menu-row"><button class="btn" data-nav id="btn-back">← Back</button></div>
+		</div>`,
+		back,
+		"screen-pause",
+		"volume"
+	);
+	root.querySelector<HTMLElement>("[data-vol]")?.focus();
+	bindVolumeSliders();
+	bind("#btn-back", () => back());
 }
 
 function controlsTable() {
@@ -590,6 +631,7 @@ function showPauseMenu() {
 			<h2 class="screen-title">Paused</h2>
 			<button class="btn btn-primary" data-nav data-autofocus id="btn-resume">Resume</button>
 			<button class="btn" data-nav id="btn-restart">Restart race</button>
+			<button class="btn" data-nav id="btn-volume">Volume</button>
 			<button class="btn" data-nav id="btn-controls">Controls</button>
 			<button class="btn" data-nav id="btn-quit">Quit to menu</button>
 		</div>`,
@@ -601,6 +643,7 @@ function showPauseMenu() {
 		state.inPauseMenu = false;
 		startRace(state.courseId, state.lastSetup!);
 	});
+	bind("#btn-volume", () => showVolume(showPauseMenu));
 	bind("#btn-controls", () => showControls(showPauseMenu));
 	bind("#btn-quit", () => {
 		state.inPauseMenu = false;
@@ -909,6 +952,7 @@ function showOnlinePauseMenu() {
 			<h2 class="screen-title">Online race</h2>
 			<p class="fineprint">The race keeps going while this menu is open.</p>
 			<button class="btn btn-primary" data-nav data-autofocus id="btn-resume">Resume</button>
+			<button class="btn" data-nav id="btn-volume">Volume</button>
 			<button class="btn" data-nav id="btn-controls">Controls</button>
 			<button class="btn" data-nav id="btn-leave">Leave room</button>
 		</div>`,
@@ -917,6 +961,7 @@ function showOnlinePauseMenu() {
 		"opause"
 	);
 	bind("#btn-resume", () => closeOnlinePause());
+	bind("#btn-volume", () => showVolume(showOnlinePauseMenu));
 	bind("#btn-controls", () => showControls(showOnlinePauseMenu));
 	bind("#btn-leave", () => leaveRoom());
 }

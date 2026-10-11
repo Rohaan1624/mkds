@@ -48,6 +48,8 @@ const pressedThisPoll = new Set<Action>();
 
 function onKeyDown(e: KeyboardEvent) {
 	if (isTextField(e.target)) return;
+	// A focused slider handles left/right natively (one step per press).
+	if (e.target instanceof HTMLInputElement && e.target.type === "range" && (e.code === "ArrowLeft" || e.code === "ArrowRight")) return;
 	if (!e.repeat) keysTapped.add(e.code);
 	keysDown.add(e.code);
 	// Stop the page scrolling or buttons re-firing while driving with arrows/space.
@@ -61,7 +63,8 @@ function onKeyUp(e: KeyboardEvent) {
 }
 
 function isTextField(target: EventTarget | null) {
-	return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement;
+	if (target instanceof HTMLInputElement) return target.type !== "range"; // sliders use menu navigation
+	return target instanceof HTMLTextAreaElement;
 }
 
 function readGamepad() {

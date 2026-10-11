@@ -7,12 +7,14 @@
 //
 
 import Peer, { DataConnection } from "peerjs";
+import { hasRelay, rtcConfig } from "./iceServers";
 
 export type NetMsg = { t: string; [k: string]: unknown };
 
 const ID_PREFIX = "mkdsweb-room-";
 const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no 0/O, 1/I
-const CONNECT_TIMEOUT_MS = 15000;
+/** ICE can take a while when it has to fall back to the relay. */
+const CONNECT_TIMEOUT_MS = 25000;
 
 function randomCode(len = 5) {
 	let s = "";
@@ -40,10 +42,11 @@ export class NetTransport {
 		this.myId = peer.id;
 	}
 
-	static host(): Promise<NetTransport> {
+	static async host(): Promise<NetTransport> {
+		const config = await rtcConfig();
 		return new Promise((resolve, reject) => {
 			const code = randomCode();
-			const peer = new Peer(ID_PREFIX + code);
+			const peer = new Peer(ID_PREFIX + code, { config });
 			const timer = setTimeout(() => reject(new Error("Couldn't reach the matchmaking server.")), CONNECT_TIMEOUT_MS);
 			peer.on("open", () => {
 				clearTimeout(timer);
@@ -60,15 +63,24 @@ export class NetTransport {
 		});
 	}
 
-	static join(code: string): Promise<NetTransport> {
+	static async join(code: string): Promise<NetTransport> {
+		const config = await rtcConfig();
 		return new Promise((resolve, reject) => {
-			const peer = new Peer();
+			const peer = new Peer({ config });
 			const fail = (msg: string) => {
 				clearTimeout(timer);
 				peer.destroy();
 				reject(new Error(msg));
 			};
-			const timer = setTimeout(() => fail("Couldn't connect to that room."), CONNECT_TIMEOUT_MS);
+			const timer = setTimeout(
+				() =>
+					fail(
+						hasRelay()
+							? "Couldn't connect to that room. Check the code, or try again."
+							: "Found the room but couldn't connect to the host. One of your networks is blocking direct connections (common on campus Wi-Fi and hotspots); the relay server fixes this."
+					),
+				CONNECT_TIMEOUT_MS
+			);
 			peer.on("error", (err) => {
 				const type = (err as { type?: string }).type;
 				fail(type === "peer-unavailable" ? "No room with that code." : String(err));
